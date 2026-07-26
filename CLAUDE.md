@@ -53,6 +53,7 @@ app.py (tkinter)  ──calls──>  pipeline.py  ──>  imaging.py   (load, 
                                            ──>  parsing.py   (text -> field guesses)
                   ──imports─>  mail.py      (.mbox -> images + body text)
      └── on save ─────────────────────────>     db.py        (sqlite)
+     └── Report menu ─────────────────────>     report.py    (csv over a date range)
 
 config.py  — every path and tuning knob      resources.py — locate tesseract/tessdata
 ```
@@ -74,6 +75,11 @@ add it to `db.V2_COLUMNS`-style migration if existing databases must gain it.
 `source_kind` distinguishes `image` / `email_image` / `email`. Duplicate
 detection differs by kind: photos match on `source_sha256`, e-receipts on
 `email_message_id`.
+
+`report.py` holds the CSV layout and date presets with no Tk import, so the
+export can be tested headlessly; `ReportDialog` in `app.py` is only the window
+around it. The CSV deliberately carries no total row — it would break sorting
+and filtering — so the total is surfaced in the app instead.
 
 ### Mailbox ingest (`mail.py`)
 

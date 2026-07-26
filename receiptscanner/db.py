@@ -175,6 +175,30 @@ class ReceiptStore:
             (message_id,),
         ).fetchone()
 
+    def entries_between(self, start: str, end: str) -> list[sqlite3.Row]:
+        """Saved entries with entry_date in [start, end], both inclusive.
+
+        Dates are stored as ISO strings, so a plain BETWEEN sorts correctly.
+        Rows with no date are left out: they cannot belong to a date range.
+        """
+        return list(
+            self._connection.execute(
+                "SELECT * FROM receipts "
+                "WHERE entry_date IS NOT NULL AND entry_date != '' "
+                "  AND entry_date BETWEEN ? AND ? "
+                "ORDER BY entry_date, id",
+                (start, end),
+            ).fetchall()
+        )
+
+    def date_bounds(self) -> tuple[str | None, str | None]:
+        """Earliest and latest entry_date on record."""
+        row = self._connection.execute(
+            "SELECT MIN(entry_date) AS lo, MAX(entry_date) AS hi FROM receipts "
+            "WHERE entry_date IS NOT NULL AND entry_date != ''"
+        ).fetchone()
+        return (row["lo"], row["hi"]) if row else (None, None)
+
     def recent(self, limit: int = 200) -> list[sqlite3.Row]:
         return list(
             self._connection.execute(

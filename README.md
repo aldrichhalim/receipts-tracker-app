@@ -57,6 +57,30 @@ The OCR panel is editable, and selecting text in it then clicking **Name**,
 **Amount**, or **Date** drops that selection into the matching field — handy
 when the automatic guess picks the wrong line.
 
+## Reports
+
+**Report → Generate Report…** (⌘E) exports saved entries over a date range to
+CSV. The dialog shows how many entries the range covers and what they add up to
+before you commit to a file, with quick presets for this month, last month, this
+year, and everything on record.
+
+```csv
+Date,Category,Expense Detail,Amount (IDR)
+2026-06-16,Makanan & Minuman,Caffeine Suite,70000.00
+2026-07-14,Transportasi,Grab,44000.00
+```
+
+Both ends of the range are inclusive, and the dates may be typed in any format
+the entry form accepts (`2026-07-01`, `01/07/2026`); a reversed range is swapped
+rather than rejected. Photos and e-receipts appear alike — the report is about
+the expense, not where it came from. Entries saved without a date are left out,
+since they cannot fall inside a range.
+
+The file is written UTF-8 with a BOM so Excel renders Indonesian text correctly,
+and amounts are unformatted so a spreadsheet can sum the column directly. No
+total row is appended, which would otherwise get in the way of sorting and
+filtering — the total is shown in the app when the report is saved.
+
 ## Mailbox import
 
 **Add from Mailbox…** (⌘M) reads a Gmail `.mbox` export and expands it into the
@@ -226,5 +250,6 @@ another machine).
 | `receiptscanner/parsing.py` | OCR text → date, category, name, amount |
 | `receiptscanner/pipeline.py` | Ties the stages together |
 | `receiptscanner/db.py` | SQLite storage |
+| `receiptscanner/report.py` | CSV export and date-range presets |
 | `receiptscanner/app.py` | tkinter UI |
 | `ReceiptScanner.spec` | PyInstaller build |

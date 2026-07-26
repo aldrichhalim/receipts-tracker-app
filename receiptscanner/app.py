@@ -26,6 +26,7 @@ from .mail import EmailReceipt, MailboxError, iter_mbox
 from .ocr import OcrUnavailableError, describe_engine, get_engine
 from .parsing import ParsedReceipt, parse_number
 from .pipeline import PipelineOutput, process_email, process_image
+from . import report
 
 QUEUED = "Queued"
 PROCESSING = "Processing"
@@ -43,6 +44,24 @@ STATUS_COLOURS = {
 
 PREVIEW_MAX_SIDE = 1800
 DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%Y/%m/%d", "%d/%m/%y", "%d-%m-%y")
+
+
+def parse_date_input(raw: str) -> str | None:
+    """Accept the common written orders and return ISO, or None if unreadable."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _format_money(amount: float, currency: str = "") -> str:
+    text = f"{amount:,.0f}" if float(amount).is_integer() else f"{amount:,.2f}"
+    return f"{currency} {text}".strip()
 
 
 def _shrink(image: Image.Image, max_side: int = PREVIEW_MAX_SIDE) -> Image.Image:
@@ -119,6 +138,158 @@ class QueueItem:
         return self.email is not None and not self.email.images
 
 
+class ReportDialog(tk.Toplevel):
+    """Pick a date range, see what it covers, write it out as CSV."""
+
+    def __init__(self, parent: "ReceiptScannerApp", store: ReceiptStore, config: Config) -> None:
+        super().__init__(parent)
+        self.store = store
+        self.config_data = config
+        self.rows: list[Any] = []
+        self._preview_job: str | None = None
+        self._parent = parent  # held explicitly: used after this window is destroyed
+
+        self.title("Generate Report")
+        self.resizable(False, False)
+        self.transient(parent)
+
+        body = ttk.Frame(self, padding=(16, 14))
+        body.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(body, text="Export saved entries as CSV",
+                  font=("Helvetica", 13, "bold")).grid(row=0, column=0, columnspan=4, sticky=tk.W)
+        ttk.Label(body, text="Columns: date, category, expense detail, amount.",
+                  foreground="#6b7280").grid(row=1, column=0, columnspan=4, sticky=tk.W, pady=(2, 12))
+
+        default_start, default_end = report.presets()["This month"]
+        self.var_start = tk.StringVar(value=default_start)
+        self.var_end = tk.StringVar(value=default_end)
+
+        ttk.Label(body, text="From").grid(row=2, column=0, sticky=tk.W)
+        self.entry_start = ttk.Entry(body, textvariable=self.var_start, width=14)
+        self.entry_start.grid(row=2, column=1, sticky=tk.W, padx=(6, 16))
+        ttk.Label(body, text="To").grid(row=2, column=2, sticky=tk.W)
+        self.entry_end = ttk.Entry(body, textvariable=self.var_end, width=14)
+        self.entry_end.grid(row=2, column=3, sticky=tk.W, padx=(6, 0))
+
+        ttk.Label(body, text="YYYY-MM-DD, inclusive", foreground="#9ca3af").grid(
+            row=3, column=0, columnspan=4, sticky=tk.W, pady=(4, 10))
+
+        quick = ttk.Frame(body)
+        quick.grid(row=4, column=0, columnspan=4, sticky=tk.W)
+        for label, (start, end) in report.presets().items():
+            ttk.Button(quick, text=label, width=11,
+                       command=lambda s=start, e=end: self._apply_range(s, e)).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(quick, text="All time", width=9, command=self._apply_all_time).pack(side=tk.LEFT)
+
+        self.preview_label = ttk.Label(body, text="", font=("Helvetica", 12))
+        self.preview_label.grid(row=5, column=0, columnspan=4, sticky=tk.W, pady=(14, 0))
+
+        buttons = ttk.Frame(body)
+        buttons.grid(row=6, column=0, columnspan=4, sticky=tk.EW, pady=(16, 0))
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
+        self.export_button = ttk.Button(buttons, text="Export CSV…", command=self._export)
+        self.export_button.pack(side=tk.RIGHT, padx=(0, 8))
+
+        for widget in (self.entry_start, self.entry_end):
+            widget.bind("<KeyRelease>", self._schedule_preview)
+        self.bind("<Return>", lambda _event: self._export())
+        self.bind("<Escape>", lambda _event: self.destroy())
+
+        self._refresh_preview()
+        self.entry_start.focus_set()
+
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_rooty() + 120
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self.grab_set()
+
+    # -- range handling --------------------------------------------------
+    def _apply_range(self, start: str, end: str) -> None:
+        self.var_start.set(start)
+        self.var_end.set(end)
+        self._refresh_preview()
+
+    def _apply_all_time(self) -> None:
+        low, high = self.store.date_bounds()
+        if not low or not high:
+            self.preview_label.config(text="No saved entries yet.", foreground="#b45309")
+            return
+        self._apply_range(low, high)
+
+    def _schedule_preview(self, _event=None) -> None:
+        if self._preview_job is not None:
+            self.after_cancel(self._preview_job)
+        self._preview_job = self.after(250, self._refresh_preview)
+
+    def _current_range(self) -> tuple[str, str] | None:
+        start = parse_date_input(self.var_start.get())
+        end = parse_date_input(self.var_end.get())
+        if start is None or end is None:
+            return None
+        return (start, end) if start <= end else (end, start)
+
+    def _refresh_preview(self) -> None:
+        self._preview_job = None
+        span = self._current_range()
+        if span is None:
+            self.rows = []
+            self.preview_label.config(text="Enter both dates as YYYY-MM-DD.", foreground="#b45309")
+            self.export_button.state(["disabled"])
+            return
+
+        start, end = span
+        self.rows = self.store.entries_between(start, end)
+        summary = report.summarize(self.rows, start, end)
+        if summary.count == 0:
+            self.preview_label.config(text=f"No entries between {start} and {end}.",
+                                      foreground="#b45309")
+            self.export_button.state(["disabled"])
+            return
+
+        total = _format_money(summary.total, self.config_data.currency)
+        self.preview_label.config(
+            text=f"{summary.count} entr{'y' if summary.count == 1 else 'ies'} · {total}",
+            foreground="#15803d",
+        )
+        self.export_button.state(["!disabled"])
+
+    # -- writing ---------------------------------------------------------
+    def _export(self) -> None:
+        span = self._current_range()
+        if span is None or not self.rows:
+            return
+        start, end = span
+
+        # Release the modal grab so the native save panel can take focus.
+        self.grab_release()
+        target = filedialog.asksaveasfilename(
+            parent=self,
+            title="Save report",
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("All files", "*.*")],
+            initialfile=report.default_filename(start, end),
+            initialdir=str(self.config_data.database_path.parent),
+        )
+        if not target:
+            self.grab_set()
+            return
+
+        try:
+            written = report.write_csv(self.rows, Path(target), self.config_data.currency)
+        except OSError as exc:
+            messagebox.showerror("Could not write report", f"{target}\n\n{exc}", parent=self)
+            self.grab_set()
+            return
+
+        summary = report.summarize(self.rows, start, end)
+        total = _format_money(summary.total, self.config_data.currency)
+        parent = self._parent
+        self.destroy()
+        parent.report_written(Path(target), written, total, start, end)
+
+
 class ReceiptScannerApp(tk.Tk):
     def __init__(self, config: Config, store: ReceiptStore) -> None:
         super().__init__()
@@ -167,6 +338,11 @@ class ReceiptScannerApp(tk.Tk):
         file_menu.add_command(label="Open Config File", command=lambda: self._reveal(self.config_data.path))
         menubar.add_cascade(label="File", menu=file_menu)
 
+        report_menu = tk.Menu(menubar, tearoff=0)
+        report_menu.add_command(label="Generate Report…", accelerator="Cmd+E",
+                                command=self.generate_report)
+        menubar.add_cascade(label="Report", menu=report_menu)
+
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="OCR Engine Info…", command=self._show_engine_info)
         help_menu.add_command(label="About", command=self._show_about)
@@ -177,6 +353,7 @@ class ReceiptScannerApp(tk.Tk):
         self.bind_all("<Command-m>", lambda _event: self.add_mailbox())
         self.bind_all("<Command-r>", lambda _event: self.start_processing())
         self.bind_all("<Command-s>", lambda _event: self.save_current())
+        self.bind_all("<Command-e>", lambda _event: self.generate_report())
 
     def _build_toolbar(self) -> None:
         bar = ttk.Frame(self, padding=(10, 8))
@@ -890,13 +1067,7 @@ class ReceiptScannerApp(tk.Tk):
             self.entry_date.focus_set()
             return None
 
-        entry_date = None
-        for fmt in DATE_FORMATS:
-            try:
-                entry_date = datetime.strptime(raw_date, fmt).date().isoformat()
-                break
-            except ValueError:
-                continue
+        entry_date = parse_date_input(raw_date)
         if entry_date is None:
             messagebox.showwarning("Invalid date", f"“{raw_date}” is not a date I can read.\nUse YYYY-MM-DD.")
             self.entry_date.focus_set()
@@ -1063,6 +1234,29 @@ class ReceiptScannerApp(tk.Tk):
                 subprocess.run(["xdg-open", str(path.parent if path.is_file() else path)], check=False)
         except Exception as exc:
             messagebox.showerror("Could not open", f"{path}\n\n{exc}")
+
+    def generate_report(self) -> None:
+        """Export saved entries over a date range as CSV."""
+        rows, _total = self.store.summary()
+        if not rows:
+            messagebox.showinfo(
+                "Nothing to report",
+                "No entries have been saved yet.\n\n"
+                "Process some receipts and save them first.",
+            )
+            return
+        dialog = ReportDialog(self, self.store, self.config_data)
+        self.wait_window(dialog)
+
+    def report_written(self, path: Path, count: int, total: str, start: str, end: str) -> None:
+        """Called by ReportDialog once the file is on disk."""
+        self._set_status(f"Report saved: {path.name} — {count} entries, {total}.")
+        if messagebox.askyesno(
+            "Report saved",
+            f"{count} entr{'y' if count == 1 else 'ies'} from {start} to {end}\n"
+            f"Total: {total}\n\n{path}\n\nShow it in Finder?",
+        ):
+            self._reveal(path)
 
     def _show_engine_info(self) -> None:
         messagebox.showinfo("OCR engine", describe_engine())
