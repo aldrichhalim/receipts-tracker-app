@@ -1,0 +1,11 @@
+# Runtime
+opencv-python-headless==5.0.0.93   # headless: the GUI is tkinter, so no Qt needed
+pytesseract==0.3.13
+pillow==12.3.0
+pillow-heif==1.5.0                 # optional: lets the app open iPhone .HEIC photos
+numpy==2.5.1
+beautifulsoup4==4.15.0             # HTML e-receipt bodies; .mbox itself uses stdlib `mailbox`
+
+# Build only
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6

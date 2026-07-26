@@ -1,0 +1,19 @@
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
+# Environment
+.venv/
+__pycache__/
+*.py[cod]
+
+# User-local runtime config, regenerated from config.default.json on first run
+config.json
+
+# Test fixtures: real receipts and a Gmail export containing personal data
+# (names, card digits, tax IDs, addresses). Kept on disk, out of git history.
+data/
+
+# macOS
+.DS_Store

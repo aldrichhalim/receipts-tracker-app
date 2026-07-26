@@ -1,0 +1,48 @@
+{
+  "output_dir": "~/Documents/ReceiptScanner/scans",
+  "originals_dir": "~/Documents/ReceiptScanner/originals",
+  "copy_originals": false,
+  "database_path": "~/Documents/ReceiptScanner/receipts.db",
+  "scan_filename_template": "{stem}_{hash8}.png",
+  "currency": "IDR",
+  "categories": [
+    "Makanan & Minuman",
+    "Belanja Harian",
+    "Transportasi",
+    "Kesehatan",
+    "Tagihan & Utilitas",
+    "Perjalanan & Akomodasi",
+    "Hiburan",
+    "Perlengkapan Kantor",
+    "Elektronik",
+    "Lainnya"
+  ],
+  "ocr": {
+    "lang": "ind",
+    "psm": 6,
+    "oem": 3,
+    "extra_config": "",
+    "timeout_seconds": 120
+  },
+  "preprocess": {
+    "detect_document": true,
+    "detect_max_dim": 700,
+    "min_document_area_ratio": 0.08,
+    "min_page_contrast": 4.0,
+    "crop_padding": 0.02,
+    "mask_background": true,
+    "mask_grow_ratio": 0.004,
+    "deskew": true,
+    "max_deskew_angle": 15.0,
+    "target_ocr_width": 1300,
+    "shadow_kernel": 31,
+    "denoise": "bilateral",
+    "clahe_clip": 0.0,
+    "clahe_grid": 8,
+    "unsharp_amount": 0.8,
+    "adaptive_block_size": 51,
+    "adaptive_c": 13,
+    "min_blob_area": 25,
+    "border_px": 24
+  }
+}
