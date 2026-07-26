@@ -75,13 +75,37 @@ V2_COLUMNS = (
 )
 
 COLUMNS = (
-    "source_kind", "email_message_id", "email_subject", "email_from", "email_date",
-    "source_path", "source_filename", "scanned_path", "archived_path",
-    "ocr_text", "ocr_text_raw", "ocr_lang", "ocr_confidence", "ocr_word_count",
-    "entry_date", "category", "name", "amount", "currency", "notes",
-    "source_width", "source_height", "source_bytes", "source_sha256",
-    "scanned_width", "scanned_height", "exif_datetime", "camera_make",
-    "camera_model", "document_detected", "deskew_angle",
+    "source_kind",
+    "email_message_id",
+    "email_subject",
+    "email_from",
+    "email_date",
+    "source_path",
+    "source_filename",
+    "scanned_path",
+    "archived_path",
+    "ocr_text",
+    "ocr_text_raw",
+    "ocr_lang",
+    "ocr_confidence",
+    "ocr_word_count",
+    "entry_date",
+    "category",
+    "name",
+    "amount",
+    "currency",
+    "notes",
+    "source_width",
+    "source_height",
+    "source_bytes",
+    "source_sha256",
+    "scanned_width",
+    "scanned_height",
+    "exif_datetime",
+    "camera_make",
+    "camera_model",
+    "document_detected",
+    "deskew_angle",
 )
 
 
@@ -103,9 +127,11 @@ class ReceiptStore:
 
     def _migrate(self) -> None:
         with self._connection:
-            existed = bool(self._connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='receipts'"
-            ).fetchone())
+            existed = bool(
+                self._connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='receipts'"
+                ).fetchone()
+            )
 
             # Add missing columns first: SCHEMA creates an index over
             # email_message_id, which a pre-v2 table does not have yet.

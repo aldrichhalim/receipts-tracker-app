@@ -44,7 +44,13 @@ except Exception:  # pragma: no cover - depends on optional wheel
     HEIF_SUPPORTED = False
 
 SUPPORTED_EXTENSIONS = [
-    ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".tif",
+    ".tiff",
+    ".webp",
 ]
 if HEIF_SUPPORTED:
     SUPPORTED_EXTENSIONS += [".heic", ".heif"]
@@ -83,8 +89,8 @@ class SourceInfo:
 class PageDetection:
     """Where the receipt is in the frame."""
 
-    quad: np.ndarray          # 4x2, full-resolution coordinates
-    mask: np.ndarray          # full-resolution uint8, 255 on paper
+    quad: np.ndarray  # 4x2, full-resolution coordinates
+    mask: np.ndarray  # full-resolution uint8, 255 on paper
     area_ratio: float
     contrast: float
 
@@ -172,6 +178,7 @@ def load_image(path: Path) -> tuple[np.ndarray, SourceInfo]:
 # Page detection
 # --------------------------------------------------------------------------
 
+
 def _order_quad(points: np.ndarray) -> np.ndarray:
     """Order 4 points as top-left, top-right, bottom-right, bottom-left."""
     points = points.reshape(4, 2).astype(np.float32)
@@ -185,7 +192,9 @@ def _order_quad(points: np.ndarray) -> np.ndarray:
     return ordered
 
 
-def _candidates_from_mask(mask: np.ndarray, top_n: int = 2) -> list[tuple[np.ndarray, np.ndarray]]:
+def _candidates_from_mask(
+    mask: np.ndarray, top_n: int = 2
+) -> list[tuple[np.ndarray, np.ndarray]]:
     """Largest blobs in `mask` as (quad, contour) pairs."""
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     found: list[tuple[np.ndarray, np.ndarray]] = []
@@ -203,7 +212,9 @@ def _candidates_from_mask(mask: np.ndarray, top_n: int = 2) -> list[tuple[np.nda
     return found
 
 
-def _area_ratio(quad: np.ndarray, shape: tuple[int, int], min_ratio: float) -> float | None:
+def _area_ratio(
+    quad: np.ndarray, shape: tuple[int, int], min_ratio: float
+) -> float | None:
     """Area ratio if the quad is geometrically page-like, else None."""
     height, width = shape
     image_area = float(height * width)
@@ -233,12 +244,14 @@ def _area_ratio(quad: np.ndarray, shape: tuple[int, int], min_ratio: float) -> f
     # A quad pinned to three or more image edges is the whole frame, not a page.
     x, y, box_width, box_height = cv2.boundingRect(ordered.astype(np.int32))
     margin = max(2, int(0.01 * max(height, width)))
-    touching = sum((
-        x <= margin,
-        y <= margin,
-        x + box_width >= width - margin,
-        y + box_height >= height - margin,
-    ))
+    touching = sum(
+        (
+            x <= margin,
+            y <= margin,
+            x + box_width >= width - margin,
+            y + box_height >= height - margin,
+        )
+    )
     if touching >= 3:
         return None
 
@@ -271,7 +284,9 @@ def _edge_candidates(small: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
     median = float(np.median(gray))
     edges = cv2.Canny(gray, int(max(0, 0.66 * median)), int(min(255, 1.33 * median)))
     # A wide close bridges the gaps a shadow leaves in the page outline.
-    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15)))
+    edges = cv2.morphologyEx(
+        edges, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    )
     return _candidates_from_mask(edges, top_n=4)
 
 
@@ -335,7 +350,7 @@ def detect_document(bgr: np.ndarray, options: dict[str, Any]) -> PageDetection |
             contrast = _paper_contrast(quad, gray)
             if contrast < min_contrast:
                 continue
-            score = contrast * (ratio ** 0.5)
+            score = contrast * (ratio**0.5)
             if best is None or score > best[0]:
                 best = (score, contour, ratio, contrast)
 
@@ -348,11 +363,13 @@ def detect_document(bgr: np.ndarray, options: dict[str, Any]) -> PageDetection |
     # corners: it cannot shear the text, only rotate and crop.
     (cx, cy), (rect_w, rect_h), angle = cv2.minAreaRect(contour)
     padding = 1.0 + float(options.get("crop_padding", 0.02))
-    box = cv2.boxPoints((
-        (cx / scale, cy / scale),
-        (rect_w * padding / scale, rect_h * padding / scale),
-        angle,
-    )).astype(np.float32)
+    box = cv2.boxPoints(
+        (
+            (cx / scale, cy / scale),
+            (rect_w * padding / scale, rect_h * padding / scale),
+            angle,
+        )
+    ).astype(np.float32)
 
     mask_small = np.zeros(small.shape[:2], np.uint8)
     cv2.drawContours(mask_small, [cv2.convexHull(contour)], -1, 255, -1)
@@ -374,7 +391,11 @@ def perspective_matrix(quad: np.ndarray) -> tuple[np.ndarray, int, int]:
         [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
         dtype=np.float32,
     )
-    return cv2.getPerspectiveTransform(ordered.astype(np.float32), destination), width, height
+    return (
+        cv2.getPerspectiveTransform(ordered.astype(np.float32), destination),
+        width,
+        height,
+    )
 
 
 def four_point_transform(bgr: np.ndarray, quad: np.ndarray) -> np.ndarray:
@@ -387,6 +408,7 @@ def four_point_transform(bgr: np.ndarray, quad: np.ndarray) -> np.ndarray:
 # --------------------------------------------------------------------------
 # Enhancement
 # --------------------------------------------------------------------------
+
 
 def estimate_skew(gray: np.ndarray, max_angle: float) -> float:
     """Small-angle skew from the dominant text block orientation."""
@@ -419,8 +441,12 @@ def rotate(image: np.ndarray, angle: float, border: int = 255) -> np.ndarray:
     matrix[1, 2] += new_height / 2 - center[1]
 
     return cv2.warpAffine(
-        image, matrix, (new_width, new_height),
-        flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=border,
+        image,
+        matrix,
+        (new_width, new_height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=border,
     )
 
 
@@ -498,7 +524,9 @@ def scan(bgr: np.ndarray, source: SourceInfo, options: dict[str, Any]) -> ScanRe
         if detection is not None:
             matrix, width, height = perspective_matrix(detection.quad)
             if width >= 32 and height >= 32:
-                working = cv2.warpPerspective(bgr, matrix, (width, height), flags=cv2.INTER_CUBIC)
+                working = cv2.warpPerspective(
+                    bgr, matrix, (width, height), flags=cv2.INTER_CUBIC
+                )
                 paper_mask = cv2.warpPerspective(
                     detection.mask, matrix, (width, height), flags=cv2.INTER_NEAREST
                 )
@@ -513,7 +541,10 @@ def scan(bgr: np.ndarray, source: SourceInfo, options: dict[str, Any]) -> ScanRe
         # Blank whatever the crop caught around the paper, so table texture is
         # never thresholded into ink. Grown slightly first: the mask traces the
         # bright area, which can sit just inside print that runs to the edge.
-        grow = max(3, int(float(options.get("mask_grow_ratio", 0.004)) * max(gray.shape))) | 1
+        grow = (
+            max(3, int(float(options.get("mask_grow_ratio", 0.004)) * max(gray.shape)))
+            | 1
+        )
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (grow, grow))
         grown = cv2.dilate(paper_mask, kernel)
         gray = np.where(grown > 0, gray, 255).astype(np.uint8)
@@ -535,7 +566,10 @@ def scan(bgr: np.ndarray, source: SourceInfo, options: dict[str, Any]) -> ScanRe
         if detected or gray.shape[1] < target_width:
             factor = target_width / gray.shape[1]
             gray = cv2.resize(
-                gray, None, fx=factor, fy=factor,
+                gray,
+                None,
+                fx=factor,
+                fy=factor,
                 interpolation=cv2.INTER_AREA if factor < 1 else cv2.INTER_CUBIC,
             )
             stages.append(f"resized x{factor:.2f}")

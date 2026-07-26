@@ -31,7 +31,7 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 class PipelineOutput:
     ocr: OcrResult
     suggestion: ParsedReceipt
-    scan: ScanResult | None = None          # None for image-less email receipts
+    scan: ScanResult | None = None  # None for image-less email receipts
     scanned_path: Path | None = None
     archived_path: Path | None = None
     email: EmailReceipt | None = None
@@ -63,17 +63,21 @@ class PipelineOutput:
 
         if self.scan is not None:
             height, width = self.scan.scanned.shape[:2]
-            record.update({
-                "scanned_width": int(width),
-                "scanned_height": int(height),
-                "document_detected": int(self.scan.document_detected),
-                "deskew_angle": float(self.scan.deskew_angle),
-                **self.scan.source.as_row(),
-            })
+            record.update(
+                {
+                    "scanned_width": int(width),
+                    "scanned_height": int(height),
+                    "document_detected": int(self.scan.document_detected),
+                    "deskew_angle": float(self.scan.deskew_angle),
+                    **self.scan.source.as_row(),
+                }
+            )
 
         if self.email is not None:
             email_row = self.email.as_row()
-            email_row.pop("source_kind", None)  # set above; distinguishes attached photos
+            email_row.pop(
+                "source_kind", None
+            )  # set above; distinguishes attached photos
             record.update(email_row)
         return record
 
@@ -101,7 +105,10 @@ def build_output_path(source: Path, sha256: str, config: Config) -> Path:
     # Same name, different photo: keep both rather than silently overwriting.
     counter = 1
     while target.exists():
-        target = config.output_dir / f"{Path(filename).stem}-{counter}{Path(filename).suffix}"
+        target = (
+            config.output_dir
+            / f"{Path(filename).stem}-{counter}{Path(filename).suffix}"
+        )
         counter += 1
     return target
 
@@ -110,7 +117,10 @@ def archive_original(source: Path, sha256: str, config: Config) -> Path | None:
     if not config.copy_originals:
         return None
     config.originals_dir.mkdir(parents=True, exist_ok=True)
-    target = config.originals_dir / f"{_safe_stem(source.stem)}_{sha256[:8]}{source.suffix.lower()}"
+    target = (
+        config.originals_dir
+        / f"{_safe_stem(source.stem)}_{sha256[:8]}{source.suffix.lower()}"
+    )
     if not target.exists():
         shutil.copy2(source, target)
     return target
@@ -129,6 +139,7 @@ def process_image(
     `email` is set when the photo came out of a mailbox, and supplies fallbacks
     for fields the receipt itself does not spell out.
     """
+
     def report(message: str) -> None:
         if progress is not None:
             progress(message)
@@ -169,13 +180,16 @@ def process_image(
     )
 
 
-def process_email(receipt: EmailReceipt, config: Config, progress=None) -> PipelineOutput:
+def process_email(
+    receipt: EmailReceipt, config: Config, progress=None
+) -> PipelineOutput:
     """Turn an image-less e-receipt into the same shape a photo produces.
 
     OCR is skipped because there is nothing to read pixels from: the figures are
     already text in the message body, so they are used directly. Confidence is
     reported as 100 since no character recognition was involved.
     """
+
     def report(message: str) -> None:
         if progress is not None:
             progress(message)
@@ -184,9 +198,7 @@ def process_email(receipt: EmailReceipt, config: Config, progress=None) -> Pipel
     text = receipt.body_text or ""
 
     report("Reading fields")
-    suggestion = parse_receipt(
-        text, config.categories, fallback_date=receipt.date_iso
-    )
+    suggestion = parse_receipt(text, config.categories, fallback_date=receipt.date_iso)
     # An e-receipt names its merchant far more reliably than a header-line guess.
     merchant = receipt.merchant_guess()
     if merchant:

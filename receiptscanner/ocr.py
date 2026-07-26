@@ -54,7 +54,9 @@ class TesseractEngine:
         try:
             self.version = str(pytesseract.get_tesseract_version())
         except Exception as exc:
-            raise OcrUnavailableError(f"Tesseract at {binary} did not run: {exc}") from exc
+            raise OcrUnavailableError(
+                f"Tesseract at {binary} did not run: {exc}"
+            ) from exc
 
     def available_languages(self) -> list[str]:
         if self.tessdata_dir is not None:

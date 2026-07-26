@@ -39,8 +39,16 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 # Lines that name the merchant on common Indonesian e-receipts.
 MERCHANT_PREFIXES = (
-    "pesanan dari", "order from", "dipesan dari", "merchant", "restoran",
-    "toko", "outlet", "store", "sold by", "penjual",
+    "pesanan dari",
+    "order from",
+    "dipesan dari",
+    "merchant",
+    "restoran",
+    "toko",
+    "outlet",
+    "store",
+    "sold by",
+    "penjual",
 )
 
 
@@ -56,7 +64,7 @@ _ADDRESS_MARKER = re.compile(
 def _trim_address(value: str, limit: int = 70) -> str:
     match = _ADDRESS_MARKER.search(value)
     if match:
-        value = value[:match.start()]
+        value = value[: match.start()]
     value = value.split(",")[0]
     return " ".join(value.split()).strip(" -–—,:")[:limit]
 
@@ -94,7 +102,9 @@ class EmailReceipt:
             lowered = line.lower().strip()
             for prefix in MERCHANT_PREFIXES:
                 if lowered.startswith(prefix):
-                    value = line.split(":", 1)[-1] if ":" in line else line[len(prefix):]
+                    value = (
+                        line.split(":", 1)[-1] if ":" in line else line[len(prefix) :]
+                    )
                     value = _trim_address(" ".join(value.split()).strip(" -–—:"))
                     if len(value) >= 3:
                         return value
@@ -107,7 +117,8 @@ class EmailReceipt:
             "email_subject": self.subject or None,
             "email_from": (
                 f"{self.sender_name} <{self.sender_email}>".strip()
-                if self.sender_email else self.sender_name or None
+                if self.sender_email
+                else self.sender_name or None
             ),
             "email_date": self.date.isoformat() if self.date else None,
         }
@@ -150,8 +161,10 @@ def html_to_text(html: str) -> str:
     for row in soup.find_all("tr"):
         if row.find("tr"):
             continue  # only the innermost rows of nested layout tables
-        cells = [" ".join(cell.get_text(" ", strip=True).split())
-                 for cell in row.find_all(["td", "th"])]
+        cells = [
+            " ".join(cell.get_text(" ", strip=True).split())
+            for cell in row.find_all(["td", "th"])
+        ]
         cells = [cell for cell in cells if cell]
         if cells:
             lines.append("   ".join(cells))
@@ -191,7 +204,9 @@ def _extract_parts(
             if not suffix:
                 suffix = "." + (content_type.split("/", 1)[1].split("+")[0] or "jpg")
             stem = _safe_name(Path(filename).stem if filename else f"image{counter}")
-            target = attachment_dir / f"msg{index:04d}_{counter:02d}_{stem}{suffix.lower()}"
+            target = (
+                attachment_dir / f"msg{index:04d}_{counter:02d}_{stem}{suffix.lower()}"
+            )
             attachment_dir.mkdir(parents=True, exist_ok=True)
             target.write_bytes(payload)
             images.append(target)

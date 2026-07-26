@@ -64,7 +64,11 @@ _FALLBACK_BINARIES = (
 def find_tesseract_binary() -> Path | None:
     # PyInstaller flattens collected binaries next to the bundled dylibs, so
     # check the flat layout as well as the tidy prefix-style one.
-    for relative in (("tesseract",), ("bin", "tesseract"), ("tesseract", "bin", "tesseract")):
+    for relative in (
+        ("tesseract",),
+        ("bin", "tesseract"),
+        ("tesseract", "bin", "tesseract"),
+    ):
         bundled = find_resource(*relative)
         if bundled and bundled.is_file() and os.access(bundled, os.X_OK):
             return bundled

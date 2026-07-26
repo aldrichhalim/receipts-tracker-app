@@ -16,88 +16,318 @@ from decimal import Decimal, InvalidOperation
 FALLBACK_CATEGORY = "Lainnya"
 
 MONTHS: dict[str, int] = {
-    "januari": 1, "februari": 2, "maret": 3, "april": 4, "mei": 5, "juni": 6,
-    "juli": 7, "agustus": 8, "september": 9, "oktober": 10, "november": 11,
+    "januari": 1,
+    "februari": 2,
+    "maret": 3,
+    "april": 4,
+    "mei": 5,
+    "juni": 6,
+    "juli": 7,
+    "agustus": 8,
+    "september": 9,
+    "oktober": 10,
+    "november": 11,
     "desember": 12,
-    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "agu": 8,
-    "ags": 8, "agt": 8, "sep": 9, "sept": 9, "okt": 10, "nov": 11, "des": 12,
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "jun": 6,
+    "jul": 7,
+    "agu": 8,
+    "ags": 8,
+    "agt": 8,
+    "sep": 9,
+    "sept": 9,
+    "okt": 10,
+    "nov": 11,
+    "des": 12,
     # English spellings show up on chain-store receipts.
-    "january": 1, "february": 2, "march": 3, "may": 5, "june": 6, "july": 7,
-    "august": 8, "october": 10, "december": 12, "aug": 8, "oct": 10, "dec": 12,
+    "january": 1,
+    "february": 2,
+    "march": 3,
+    "may": 5,
+    "june": 6,
+    "july": 7,
+    "august": 8,
+    "october": 10,
+    "december": 12,
+    "aug": 8,
+    "oct": 10,
+    "dec": 12,
 }
 
 # Higher tier wins. Within a tier the largest amount wins.
 TOTAL_KEYWORDS: list[tuple[int, tuple[str, ...]]] = [
-    (3, ("grand total", "total bayar", "total belanja", "total penjualan",
-         "total akhir", "total tagihan", "jumlah bayar", "total pembayaran",
-         "total amount", "amount due", "total paid", "total harga")),
+    (
+        3,
+        (
+            "grand total",
+            "total bayar",
+            "total belanja",
+            "total penjualan",
+            "total akhir",
+            "total tagihan",
+            "jumlah bayar",
+            "total pembayaran",
+            "total amount",
+            "amount due",
+            "total paid",
+            "total harga",
+        ),
+    ),
     (2, ("total", "jumlah", "netto", "net sales", "net total")),
-    (1, ("subtotal", "sub total", "tunai", "cash", "bayar", "dibayar", "debit",
-         "kartu kredit", "credit card", "rp")),
+    (
+        1,
+        (
+            "subtotal",
+            "sub total",
+            "tunai",
+            "cash",
+            "bayar",
+            "dibayar",
+            "debit",
+            "kartu kredit",
+            "credit card",
+            "rp",
+        ),
+    ),
 ]
 
 # Lines that carry a number which is never the receipt total.
 AMOUNT_EXCLUSIONS = (
-    "kembali", "kembalian", "change", "diskon", "discount", "potongan",
-    "hemat", "saving", "ppn", "pajak", "tax", "service charge", "poin",
-    "point", "npwp", "no.", "telp", "phone", "kasir", "cashier", "member",
+    "kembali",
+    "kembalian",
+    "change",
+    "diskon",
+    "discount",
+    "potongan",
+    "hemat",
+    "saving",
+    "ppn",
+    "pajak",
+    "tax",
+    "service charge",
+    "poin",
+    "point",
+    "npwp",
+    "no.",
+    "telp",
+    "phone",
+    "kasir",
+    "cashier",
+    "member",
 )
 
 CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "Makanan & Minuman": (
-        "resto", "restoran", "cafe", "kafe", "coffee", "kopi", "warung", "warteg",
-        "bakso", "ayam", "nasi", "mie", "food", "burger", "pizza", "kfc", "mcd",
-        "mcdonald", "starbucks", "bakery", "roti", "dapur", "kitchen", "catering",
-        "sate", "soto", "seafood", "dimsum", "boba", "juice", "es teh", "geprek",
-        "cappucino", "cappuccino", "espresso", "latte", "croissant", "caffeine",
-        "eatery", "bistro", "grill", "chicken", "kedai", "bakmi", "kitchen",
-        "grabfood", "gofood", "shopeefood", "makanan", "minuman", "menikmati",
+        "resto",
+        "restoran",
+        "cafe",
+        "kafe",
+        "coffee",
+        "kopi",
+        "warung",
+        "warteg",
+        "bakso",
+        "ayam",
+        "nasi",
+        "mie",
+        "food",
+        "burger",
+        "pizza",
+        "kfc",
+        "mcd",
+        "mcdonald",
+        "starbucks",
+        "bakery",
+        "roti",
+        "dapur",
+        "kitchen",
+        "catering",
+        "sate",
+        "soto",
+        "seafood",
+        "dimsum",
+        "boba",
+        "juice",
+        "es teh",
+        "geprek",
+        "cappucino",
+        "cappuccino",
+        "espresso",
+        "latte",
+        "croissant",
+        "caffeine",
+        "eatery",
+        "bistro",
+        "grill",
+        "chicken",
+        "kedai",
+        "bakmi",
+        "kitchen",
+        "grabfood",
+        "gofood",
+        "shopeefood",
+        "makanan",
+        "minuman",
+        "menikmati",
     ),
     "Belanja Harian": (
-        "indomaret", "alfamart", "alfamidi", "superindo", "hypermart", "transmart",
-        "carrefour", "hero", "ranch market", "supermarket", "minimarket", "grosir",
-        "swalayan", "toserba", "lotte", "grocery",
+        "indomaret",
+        "alfamart",
+        "alfamidi",
+        "superindo",
+        "hypermart",
+        "transmart",
+        "carrefour",
+        "hero",
+        "ranch market",
+        "supermarket",
+        "minimarket",
+        "grosir",
+        "swalayan",
+        "toserba",
+        "lotte",
+        "grocery",
     ),
     "Transportasi": (
-        "grab", "gojek", "gocar", "goride", "bluebird", "blue bird", "taksi",
-        "taxi", "parkir", "parking", "bensin", "pertamina", "shell", "spbu",
-        "bbm", "pertalite", "pertamax", "tol", "kereta", "krl", "mrt", "lrt",
-        "busway", "transjakarta", "damri", "bengkel",
+        "grab",
+        "gojek",
+        "gocar",
+        "goride",
+        "bluebird",
+        "blue bird",
+        "taksi",
+        "taxi",
+        "parkir",
+        "parking",
+        "bensin",
+        "pertamina",
+        "shell",
+        "spbu",
+        "bbm",
+        "pertalite",
+        "pertamax",
+        "tol",
+        "kereta",
+        "krl",
+        "mrt",
+        "lrt",
+        "busway",
+        "transjakarta",
+        "damri",
+        "bengkel",
     ),
     "Kesehatan": (
-        "apotek", "apotik", "kimia farma", "guardian", "century", "klinik",
-        "rumah sakit", "dokter", "obat", "laboratorium", "pharmacy", "hospital",
-        "medical", "dental", "gigi",
+        "apotek",
+        "apotik",
+        "kimia farma",
+        "guardian",
+        "century",
+        "klinik",
+        "rumah sakit",
+        "dokter",
+        "obat",
+        "laboratorium",
+        "pharmacy",
+        "hospital",
+        "medical",
+        "dental",
+        "gigi",
     ),
     "Tagihan & Utilitas": (
-        "pln", "listrik", "pdam", "indihome", "telkom", "wifi", "pulsa",
-        "token listrik", "biznet", "first media", "myrepublic", "internet",
-        "tagihan", "iuran",
+        "pln",
+        "listrik",
+        "pdam",
+        "indihome",
+        "telkom",
+        "wifi",
+        "pulsa",
+        "token listrik",
+        "biznet",
+        "first media",
+        "myrepublic",
+        "internet",
+        "tagihan",
+        "iuran",
     ),
     "Perjalanan & Akomodasi": (
-        "hotel", "airbnb", "garuda", "lion air", "citilink", "airasia", "batik air",
-        "traveloka", "tiket.com", "penginapan", "villa", "resort", "bandara",
-        "boarding pass", "guest house",
+        "hotel",
+        "airbnb",
+        "garuda",
+        "lion air",
+        "citilink",
+        "airasia",
+        "batik air",
+        "traveloka",
+        "tiket.com",
+        "penginapan",
+        "villa",
+        "resort",
+        "bandara",
+        "boarding pass",
+        "guest house",
     ),
     "Hiburan": (
-        "bioskop", "cinema", "cgv", "cinepolis", "xxi", "netflix", "spotify",
-        "karaoke", "game", "steam", "playstation", "wahana", "tiket masuk",
+        "bioskop",
+        "cinema",
+        "cgv",
+        "cinepolis",
+        "xxi",
+        "netflix",
+        "spotify",
+        "karaoke",
+        "game",
+        "steam",
+        "playstation",
+        "wahana",
+        "tiket masuk",
     ),
     "Perlengkapan Kantor": (
-        "atk", "gramedia", "stationery", "percetakan", "fotokopi", "toner",
-        "tinta", "office", "kertas a4", "alat tulis",
+        "atk",
+        "gramedia",
+        "stationery",
+        "percetakan",
+        "fotokopi",
+        "toner",
+        "tinta",
+        "office",
+        "kertas a4",
+        "alat tulis",
     ),
     "Elektronik": (
-        "erafone", "ibox", "digimap", "elektronik", "laptop", "komputer",
-        "handphone", "samsung", "xiaomi", "electronic city",
+        "erafone",
+        "ibox",
+        "digimap",
+        "elektronik",
+        "laptop",
+        "komputer",
+        "handphone",
+        "samsung",
+        "xiaomi",
+        "electronic city",
     ),
 }
 
 # Header words that are never the merchant name.
 NAME_NOISE = (
-    "struk", "nota", "invoice", "receipt", "faktur", "kwitansi", "bukti",
-    "customer copy", "merchant copy", "npwp", "terima kasih", "thank you",
-    "welcome", "selamat datang", "tax invoice", "pembayaran",
+    "struk",
+    "nota",
+    "invoice",
+    "receipt",
+    "faktur",
+    "kwitansi",
+    "bukti",
+    "customer copy",
+    "merchant copy",
+    "npwp",
+    "terima kasih",
+    "thank you",
+    "welcome",
+    "selamat datang",
+    "tax invoice",
+    "pembayaran",
 )
 
 _MONEY_TOKEN = re.compile(r"\d[\d.,]*\d|\d")
@@ -141,7 +371,7 @@ def parse_number(raw: str) -> Decimal | None:
         if last_sep == -1:
             return Decimal(cleaned)
 
-        tail = cleaned[last_sep + 1:]
+        tail = cleaned[last_sep + 1 :]
         if len(tail) in (1, 2) and tail.isdigit():
             head = re.sub(r"[.,]", "", cleaned[:last_sep]) or "0"
             return Decimal(f"{head}.{tail}")
@@ -204,7 +434,9 @@ def extract_amount(text: str) -> Decimal | None:
                 if keyword in lowered and len(keyword) > len(matched):
                     tier, matched = level, keyword
 
-        values = [v for v in _money_candidates(line, money_shaped_only=True) if v >= 100]
+        values = [
+            v for v in _money_candidates(line, money_shaped_only=True) if v >= 100
+        ]
         if not values:
             continue
         candidate = max(values)
@@ -213,7 +445,9 @@ def extract_amount(text: str) -> Decimal | None:
             unlabelled.append(candidate)
             continue
 
-        if tier > best_tier or (tier == best_tier and best_value is not None and candidate > best_value):
+        if tier > best_tier or (
+            tier == best_tier and best_value is not None and candidate > best_value
+        ):
             best_tier, best_value = tier, candidate
 
     if best_value is None:
@@ -247,7 +481,9 @@ def extract_date(text: str) -> str | None:
 
     # ISO first, it is unambiguous.
     for match in re.finditer(r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b", text):
-        parsed = _valid_date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        parsed = _valid_date(
+            int(match.group(1)), int(match.group(2)), int(match.group(3))
+        )
         if parsed:
             return parsed
 
@@ -333,9 +569,13 @@ def guess_category(text: str, allowed: list[str]) -> str:
     return allowed[-1] if allowed else ""
 
 
-def parse_receipt(text: str, categories: list[str], fallback_date: str = "") -> ParsedReceipt:
+def parse_receipt(
+    text: str, categories: list[str], fallback_date: str = ""
+) -> ParsedReceipt:
     if not text or not text.strip():
-        return ParsedReceipt(entry_date=fallback_date, category=guess_category("", categories))
+        return ParsedReceipt(
+            entry_date=fallback_date, category=guess_category("", categories)
+        )
 
     amount = extract_amount(text)
     return ParsedReceipt(

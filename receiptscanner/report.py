@@ -59,17 +59,20 @@ def write_csv(rows: Iterable[Mapping], path: Path, currency: str = "") -> int:
                 amount = f"{float(row['amount'] or 0):.2f}"
             except (TypeError, ValueError):
                 amount = ""
-            writer.writerow([
-                row["entry_date"] or "",
-                row["category"] or "",
-                row["name"] or "",
-                amount,
-            ])
+            writer.writerow(
+                [
+                    row["entry_date"] or "",
+                    row["category"] or "",
+                    row["name"] or "",
+                    amount,
+                ]
+            )
             written += 1
     return written
 
 
 # -- range presets ------------------------------------------------------
+
 
 def month_start(today: date) -> date:
     return today.replace(day=1)
@@ -83,6 +86,9 @@ def presets(today: date | None = None) -> dict[str, tuple[str, str]]:
 
     return {
         "This month": (this_month.isoformat(), today.isoformat()),
-        "Last month": (month_start(last_month_end).isoformat(), last_month_end.isoformat()),
+        "Last month": (
+            month_start(last_month_end).isoformat(),
+            last_month_end.isoformat(),
+        ),
         "This year": (today.replace(month=1, day=1).isoformat(), today.isoformat()),
     }

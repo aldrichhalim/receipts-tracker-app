@@ -177,8 +177,10 @@ class Config:
     @property
     def categories(self) -> list[str]:
         cats = self.get("categories", default=[])
-        return [str(c) for c in cats] if isinstance(cats, list) and cats else list(
-            BUILTIN_DEFAULTS["categories"]
+        return (
+            [str(c) for c in cats]
+            if isinstance(cats, list) and cats
+            else list(BUILTIN_DEFAULTS["categories"])
         )
 
     @property

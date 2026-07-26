@@ -50,13 +50,17 @@ def self_test(paths: list[str]) -> int:
     def report(output, label: str) -> int:
         suggestion = output.suggestion
         if output.scan is not None:
-            print(f"  [image] detected={output.scan.document_detected} "
-                  f"conf={output.ocr.mean_confidence} words={output.ocr.word_count}")
+            print(
+                f"  [image] detected={output.scan.document_detected} "
+                f"conf={output.ocr.mean_confidence} words={output.ocr.word_count}"
+            )
             print(f"  scan -> {output.scanned_path}")
         else:
             print(f"  [email] {output.ocr.word_count} words, OCR skipped (no image)")
-        print(f"  date={suggestion.entry_date!r} category={suggestion.category!r} "
-              f"name={suggestion.name!r} amount={suggestion.amount!r}")
+        print(
+            f"  date={suggestion.entry_date!r} category={suggestion.category!r} "
+            f"name={suggestion.name!r} amount={suggestion.amount!r}"
+        )
         if output.ocr.word_count == 0:
             print(f"  FAIL: no text recovered from {label}")
             return 1
@@ -101,7 +105,9 @@ def self_test(paths: list[str]) -> int:
             print(f"  FAIL: {type(exc).__name__}: {exc}")
             failures += 1
 
-    print(f"\n{'FAILED' if failures else 'PASSED'}: {checked - failures}/{checked} receipts")
+    print(
+        f"\n{'FAILED' if failures else 'PASSED'}: {checked - failures}/{checked} receipts"
+    )
     return 1 if failures else 0
 
 
