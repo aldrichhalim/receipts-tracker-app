@@ -5,7 +5,34 @@ photos, the app straightens and cleans each one into a high-contrast black-and-
 white scan, OCRs it with Tesseract's Indonesian model, then walks you through
 reviewing every receipt and saves the result to SQLite.
 
-Nothing leaves the machine — no network calls anywhere in the pipeline.
+**Nothing leaves the machine — there are no network calls anywhere in the
+pipeline**, including for `.mbox` import: remote images referenced by email
+HTML are never fetched.
+
+## Features
+
+- **OpenCV preprocessing** that finds the receipt in a photo, straightens it,
+  and cleans it into a high-contrast scan — tuned against real photos, not
+  synthetic test images (see [The pipeline](#the-pipeline)).
+- **Tesseract OCR** with the Indonesian language model, tuned for Indonesian
+  number formats (`1.234.567,89`), month names, and point-of-sale vocabulary.
+- **Gmail `.mbox` import** that expands a mailbox export into the same review
+  queue as photos, reading HTML e-receipts as text directly (no OCR needed)
+  and running attached photos through the normal pipeline.
+- **A mandatory human review step** before anything is saved — every OCR
+  suggestion is editable, never auto-committed.
+- **CSV reporting** over a date range, with quick presets and a live
+  entry-count/total preview before export.
+- **A standalone macOS `.app`** with OpenCV, Tesseract, and the language
+  models embedded, built via PyInstaller — no Homebrew required to run it.
+
+## Requirements
+
+- macOS (the build tooling and app bundling target macOS; the Python pipeline
+  itself has no macOS-specific code)
+- Python 3.11+
+- [Homebrew](https://brew.sh) with `tesseract` and `tesseract-lang`, for
+  running from source (not needed for the built `.app`, which embeds its own)
 
 ## Running from source
 
@@ -253,3 +280,7 @@ another machine).
 | `receiptscanner/report.py` | CSV export and date-range presets |
 | `receiptscanner/app.py` | tkinter UI |
 | `ReceiptScanner.spec` | PyInstaller build |
+
+## License
+
+[MIT](LICENSE)
