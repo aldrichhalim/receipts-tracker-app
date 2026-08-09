@@ -343,11 +343,16 @@ def detect_document(bgr: np.ndarray, options: dict[str, Any]) -> PageDetection |
             candidates = strategy(small)
         except cv2.error:
             continue
-        for quad, contour in candidates:
-            ratio = _area_ratio(quad, small.shape[:2], min_ratio)
+        for _quad, contour in candidates:
+            # Gate and score the rectangle the crop will actually use, not the
+            # polygon approximation. minAreaRect of an irregular contour can be
+            # far larger than its approximated quad, so checking the quad lets
+            # a candidate that crops the entire frame pass the geometry test.
+            crop_quad = cv2.boxPoints(cv2.minAreaRect(contour)).astype(np.float32)
+            ratio = _area_ratio(crop_quad, small.shape[:2], min_ratio)
             if ratio is None:
                 continue
-            contrast = _paper_contrast(quad, gray)
+            contrast = _paper_contrast(crop_quad, gray)
             if contrast < min_contrast:
                 continue
             score = contrast * (ratio**0.5)
