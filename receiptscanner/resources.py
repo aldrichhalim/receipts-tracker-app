@@ -100,13 +100,13 @@ def find_tessdata_dir(binary: Path | None = None) -> Path | None:
             if candidate.is_dir() and any(candidate.glob("*.traineddata")):
                 return candidate
 
-    if binary is not None:
-        # <prefix>/bin/tesseract -> <prefix>/share/tessdata
-        prefix = binary.resolve().parent.parent
-        for rel in ("share/tessdata", "tessdata"):
-            candidate = prefix / rel
-            if candidate.is_dir() and any(candidate.glob("*.traineddata")):
-                return candidate
+    # if binary is not None:
+    #     # <prefix>/bin/tesseract -> <prefix>/share/tessdata
+    #     prefix = binary.resolve().parent.parent
+    #     for rel in ("share/tessdata", "tessdata"):
+    #         candidate = prefix / rel
+    #         if candidate.is_dir() and any(candidate.glob("*.traineddata")):
+    #             return candidate
 
     for candidate in (
         Path("/opt/homebrew/share/tessdata"),
