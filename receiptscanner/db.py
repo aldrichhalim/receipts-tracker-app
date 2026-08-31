@@ -13,7 +13,9 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS receipts (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    -- provenance: 'image', 'email' (HTML e-receipt), 'email_image' (attachment)
+    -- provenance: 'image', 'email_render' (e-receipt drawn from its markup),
+    -- 'email_image' (photo attached to a message), 'email' (legacy rows, read
+    -- as text before the render path existed)
     source_kind       TEXT DEFAULT 'image',
     email_message_id  TEXT,
     email_subject     TEXT,

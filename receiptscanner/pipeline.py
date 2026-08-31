@@ -4,12 +4,13 @@ Two entry points, both returning the same `PipelineOutput` so the UI and the
 database do not care where a receipt came from:
 
 * `process_image`  — photo: load, scan, save, OCR, suggest fields.
-* `process_email`  — HTML e-receipt with no image: the body text takes the
-                     place of the OCR text and the imaging stages are skipped.
+* `process_email`  — HTML e-receipt with no image: the markup is drawn as an
+                     image first, then read back by OCR like any other receipt.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 from dataclasses import dataclass
@@ -17,7 +18,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from . import imaging
+import cv2
+
+from . import imaging, render
 from .config import Config
 from .imaging import ScanResult
 from .mail import EmailReceipt
@@ -36,6 +39,7 @@ class PipelineOutput:
     archived_path: Path | None = None
     email: EmailReceipt | None = None
     source_path: Path | None = None
+    rendered: bool = False  # image was drawn from the markup, not photographed
 
     @property
     def has_image(self) -> bool:
@@ -45,6 +49,8 @@ class PipelineOutput:
         """Flatten into the column set ReceiptStore expects."""
         if self.email is None:
             source_kind = "image"
+        elif self.rendered:
+            source_kind = "email_render"
         else:
             source_kind = "email_image" if self.has_image else "email"
 
@@ -183,38 +189,67 @@ def process_image(
 def process_email(
     receipt: EmailReceipt, config: Config, progress=None
 ) -> PipelineOutput:
-    """Turn an image-less e-receipt into the same shape a photo produces.
+    """Draw an image-less e-receipt, then read it back like a photograph.
 
-    OCR is skipped because there is nothing to read pixels from: the figures are
-    already text in the message body, so they are used directly. Confidence is
-    reported as 100 since no character recognition was involved.
+    The markup is rendered rather than parsed as text because a rendered layout
+    keeps a label and its amount on one line even where the HTML never said so.
+    `imaging.scan()` is deliberately skipped: a render is already clean black on
+    white, so page detection would have no page to find and the threshold chain
+    could only damage glyphs that needed no repair.
     """
 
     def report(message: str) -> None:
         if progress is not None:
             progress(message)
 
-    report("Reading message")
-    text = receipt.body_text or ""
+    report("Rendering email")
+    rendered = render.render_email(receipt, config.email_render)
+
+    report("Saving rendered image")
+    stem = _safe_stem(receipt.subject or receipt.sender_name or "email")
+    # Message-ID is the stable identity of an e-receipt; hash it so the filename
+    # is the same shape as a photo's and free of the angle brackets it carries.
+    digest = hashlib.sha256(
+        (receipt.message_id or f"{receipt.mbox_path}#{receipt.index}").encode()
+    ).hexdigest()
+    scanned_path = build_output_path(
+        receipt.mbox_path.with_name(f"{stem}.png"), digest, config
+    )
+    imaging.write_image(rendered, scanned_path)
+
+    # Re-read what we just wrote purely to get a real SourceInfo — it carries the
+    # sha256 and dimensions the record wants, and hand-faking one would drift.
+    _, source = imaging.load_image(scanned_path)
+    scan = ScanResult(
+        original_bgr=cv2.cvtColor(rendered, cv2.COLOR_GRAY2BGR),
+        scanned=rendered,
+        source=source,
+        document_detected=False,
+        deskew_angle=0.0,
+        stages=["rendered from email markup", "OCR"],
+    )
+
+    report("Running OCR")
+    options = dict(config.ocr)
+    options["psm"] = config.email_render.get("psm", options.get("psm", 6))
+    ocr = run_ocr(rendered, options)
 
     report("Reading fields")
-    suggestion = parse_receipt(text, config.categories, fallback_date=receipt.date_iso)
-    # An e-receipt names its merchant far more reliably than a header-line guess.
+    suggestion = parse_receipt(
+        ocr.text, config.categories, fallback_date=receipt.date_iso
+    )
+    # The message body names its merchant far more reliably than OCR of a render
+    # or a header-line guess, so it still wins here.
     merchant = receipt.merchant_guess()
     if merchant:
         suggestion.name = merchant
 
-    ocr = OcrResult(
-        text=text,
-        mean_confidence=100.0 if text.strip() else 0.0,
-        word_count=len(text.split()),
-        lang="email",
-    )
     return PipelineOutput(
         ocr=ocr,
         suggestion=suggestion,
-        scan=None,
-        scanned_path=None,
+        scan=scan,
+        scanned_path=scanned_path,
         email=receipt,
-        source_path=receipt.mbox_path,
+        source_path=scanned_path,
+        rendered=True,
     )

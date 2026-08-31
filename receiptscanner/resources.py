@@ -87,6 +87,40 @@ def find_tesseract_binary() -> Path | None:
     return None
 
 
+# Fonts the email renderer draws with, best first. All three ship with macOS;
+# the last is the safety net, since /System/Library/Fonts is never trimmed while
+# Supplemental/ can be on a minimal install.
+_FALLBACK_FONTS = (
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/Library/Fonts/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+)
+
+
+def find_render_font(preferred: str = "") -> Path | None:
+    """A TrueType face for rendering email receipts.
+
+    Returning None is not fatal: the renderer falls back to Pillow's built-in
+    bitmap font, which OCR reads badly but which keeps the app running.
+    """
+    if preferred:
+        candidate = Path(preferred).expanduser()
+        if candidate.is_file():
+            return candidate
+
+    bundled = find_resource("fonts")
+    if bundled and bundled.is_dir():
+        for suffix in ("*.ttf", "*.ttc", "*.otf"):
+            for candidate in sorted(bundled.glob(suffix)):
+                return candidate
+
+    for candidate in _FALLBACK_FONTS:
+        if Path(candidate).is_file():
+            return Path(candidate)
+    return None
+
+
 def find_tessdata_dir(binary: Path | None = None) -> Path | None:
     """Directory holding the *.traineddata files."""
     bundled = find_resource("tessdata")

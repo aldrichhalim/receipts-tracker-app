@@ -5,9 +5,10 @@ An exported mailbox holds two quite different kinds of receipt:
 * **Photos**, attached as image parts. Those are written out to disk and go
   through the ordinary OpenCV + Tesseract pipeline, unchanged.
 * **HTML e-receipts** (Grab, GoTo, airline and hotel confirmations...), where
-  the figures live in the markup and there is no image at all. Those are turned
-  into text here and skip OCR entirely — there is nothing to read pixels from,
-  and the result is exact rather than a best guess.
+  the figures live in the markup and there is no image at all. This module
+  reduces those to rows of cells; `render.py` draws them, and they then go
+  through OCR like any other receipt, so a human has a picture to check the
+  suggested figures against.
 
 Remote images referenced by `<img src="https://...">` are deliberately never
 fetched: this app makes no network calls, and in a marketing email those URLs
@@ -85,6 +86,7 @@ class EmailReceipt:
     message_id: str = ""
     date: datetime | None = None
     body_text: str = ""
+    body_html: str = ""
     images: list[Path] = field(default_factory=list)
 
     @property
@@ -144,12 +146,13 @@ def _part_text(part: Message) -> str:
         return payload.decode("utf-8", "replace")
 
 
-def html_to_text(html: str) -> str:
-    """Flatten HTML into lines, keeping each table row on one line.
+def structured_rows(html: str) -> list[list[str]]:
+    """Reduce HTML to rows of cells, keeping each table row intact.
 
-    HTML receipts lay a label and its amount out in sibling cells. Naive tag
-    stripping puts them on separate lines, which breaks field extraction, since
-    that works line by line looking for "Total ... 44.000".
+    HTML receipts lay a label and its amount out in sibling cells, so the cell
+    boundaries are the structure worth keeping: they are what lets the renderer
+    put a label and its amount on one visual line, and what stops field
+    extraction from reading "Total" and "44.000" as unrelated lines.
     """
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "head", "title"]):
@@ -157,7 +160,7 @@ def html_to_text(html: str) -> str:
     for br in soup.find_all("br"):
         br.replace_with("\n")
 
-    lines: list[str] = []
+    rows: list[list[str]] = []
     for row in soup.find_all("tr"):
         if row.find("tr"):
             continue  # only the innermost rows of nested layout tables
@@ -167,14 +170,19 @@ def html_to_text(html: str) -> str:
         ]
         cells = [cell for cell in cells if cell]
         if cells:
-            lines.append("   ".join(cells))
+            rows.append(cells)
 
-    if len(lines) < 3:
-        # Not a table-based layout; fall back to plain block text.
-        lines = [" ".join(line.split()) for line in soup.get_text("\n").splitlines()]
+    if len(rows) < 3:
+        # Not a table-based layout; fall back to one cell per line of block text.
+        rows = [[" ".join(line.split())] for line in soup.get_text("\n").splitlines()]
 
-    cleaned = [line for line in (line.strip() for line in lines) if line]
-    return "\n".join(cleaned)
+    return [row for row in rows if any(cell.strip() for cell in row)]
+
+
+def html_to_text(html: str) -> str:
+    """Flatten HTML into lines, keeping each table row on one line."""
+    lines = ["   ".join(row).strip() for row in structured_rows(html)]
+    return "\n".join(line for line in lines if line)
 
 
 def _safe_name(value: str) -> str:
@@ -183,7 +191,7 @@ def _safe_name(value: str) -> str:
 
 def _extract_parts(
     message: Message, index: int, attachment_dir: Path, min_bytes: int
-) -> tuple[str, list[Path]]:
+) -> tuple[str, str, list[Path]]:
     plain: list[str] = []
     html: list[str] = []
     images: list[Path] = []
@@ -217,10 +225,11 @@ def _extract_parts(
         elif content_type == "text/html":
             html.append(_part_text(part))
 
+    markup = "\n".join(chunk for chunk in html if chunk.strip()).strip()
     body = "\n".join(chunk for chunk in plain if chunk.strip()).strip()
-    if not body and html:
-        body = html_to_text("\n".join(html))
-    return body, images
+    if not body and markup:
+        body = html_to_text(markup)
+    return body, markup, images
 
 
 def iter_mbox(
@@ -239,11 +248,11 @@ def iter_mbox(
     try:
         for index, message in enumerate(box):
             try:
-                body, images = _extract_parts(
+                body, markup, images = _extract_parts(
                     message, index, Path(attachment_dir), min_attachment_bytes
                 )
             except Exception as exc:  # one broken message must not stop the import
-                body, images = f"[could not read message: {exc}]", []
+                body, markup, images = f"[could not read message: {exc}]", "", []
 
             sender_name, sender_email = parseaddr(message.get("From") or "")
             date = None
@@ -262,6 +271,7 @@ def iter_mbox(
                 message_id=(message.get("Message-ID") or "").strip(),
                 date=date,
                 body_text=body,
+                body_html=markup,
                 images=images,
             )
     finally:

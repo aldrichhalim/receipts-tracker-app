@@ -44,5 +44,16 @@
     "adaptive_c": 13,
     "min_blob_area": 25,
     "border_px": 24
+  },
+  "email_render": {
+    "width": 1600,
+    "font_size": 26,
+    "header_font_size": 34,
+    "line_spacing": 12,
+    "margin": 48,
+    "column_gap": 80,
+    "max_height": 20000,
+    "font_path": "",
+    "psm": 4
   }
 }

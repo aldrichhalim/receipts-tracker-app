@@ -51,7 +51,8 @@ Data flows in one direction through `receiptscanner/`:
 app.py (tkinter)  ──calls──>  pipeline.py  ──>  imaging.py   (load, detect, clean)
                                            ──>  ocr.py       (tesseract subprocess)
                                            ──>  parsing.py   (text -> field guesses)
-                  ──imports─>  mail.py      (.mbox -> images + body text)
+                                           ──>  render.py    (email markup -> image)
+                  ──imports─>  mail.py      (.mbox -> images + rows + body text)
      └── on save ─────────────────────────>     db.py        (sqlite)
      └── Report menu ─────────────────────>     report.py    (csv over a date range)
 
@@ -62,19 +63,32 @@ config.py  — every path and tuning knob      resources.py — locate tesseract
 that return the same `PipelineOutput`:
 
 - `process_image()` — a photo, whether added directly or pulled off an email.
-- `process_email()` — an HTML e-receipt with **no** image. OCR is skipped
-  entirely; the message body *is* the text. `PipelineOutput.scan` is None, so
-  anything reading `.scan` must handle None (see `Processed.from_output` and
-  `_render_image`, which shows an explanatory message instead of a canvas).
+- `process_email()` — an HTML e-receipt with no photo of its own. `render.py`
+  draws the markup as an image, and that image goes through OCR like any other
+  receipt, so the review step always has something to look at.
+
+`process_email` deliberately **skips `imaging.scan()`**: a render is already
+clean black on white, so page detection has no page to find, and the shadow /
+unsharp / adaptive-threshold chain could only damage glyphs that need no
+repair. It builds a `ScanResult` by hand instead, and re-reads the PNG it just
+wrote purely to obtain a real `SourceInfo`. It also overrides the OCR page
+segmentation with `email_render.psm` (4, "single column of variable-size text")
+— the `psm 6` tuned for photographed receipts reads a wide label/amount gutter
+worse.
+
+`PipelineOutput.scan` is still typed `| None`, so anything reading it must
+handle None, but no current path produces that.
 
 `as_record()` flattens into the exact column set `db.ReceiptStore` expects; the
 UI merges the reviewed form values on top and saves. If you add a stored field,
 touch `db.COLUMNS`, `db.SCHEMA`, and `PipelineOutput.as_record()` together — and
 add it to `db.V2_COLUMNS`-style migration if existing databases must gain it.
 
-`source_kind` distinguishes `image` / `email_image` / `email`. Duplicate
-detection differs by kind: photos match on `source_sha256`, e-receipts on
-`email_message_id`.
+`source_kind` distinguishes `image` / `email_image` (photo attached to a
+message) / `email_render` (drawn from markup). `email` is legacy: rows written
+before the render path existed. Duplicate detection differs by kind — photos
+match on `source_sha256`, e-receipts on `email_message_id`, because a rendered
+image's hash is a property of the renderer rather than of the receipt.
 
 `report.py` holds the CSV layout and date presets with no Tk import, so the
 export can be tested headlessly; `ReportDialog` in `app.py` is only the window
@@ -91,12 +105,40 @@ BeautifulSoup is used only to flatten HTML bodies. Non-obvious rules:
   parts are extracted.
 - **Image parts under `MIN_ATTACHMENT_BYTES` (8 KB) are ignored** as logos and
   spacers, otherwise every signature image becomes a "receipt".
-- **`html_to_text` keeps each innermost `<tr>` on one line.** HTML receipts put
-  a label and its amount in sibling cells; separating them breaks field
-  extraction, which is line-oriented. Falls back to block text if the document
-  yields fewer than 3 rows.
+- **`structured_rows` keeps each innermost `<tr>` intact**, as a list of cells.
+  HTML receipts put a label and its amount in sibling cells; separating them
+  breaks field extraction, which is line-oriented, and costs the renderer the
+  structure it needs to put the pair on one visual line. Falls back to block
+  text if the document yields fewer than 3 rows. `html_to_text` is now just
+  `structured_rows` joined, so the two cannot drift apart.
+- **`body_html` is kept alongside `body_text`.** The plain-text alternative used
+  to win outright, which threw away the markup the renderer needs — most
+  e-receipts are `multipart/alternative` and carry both.
 - A photo attached to an email takes the *receipt's own* printed date over the
   email `Date` header — the header is only a fallback.
+
+### Rendering e-receipts (`render.py`)
+
+Pillow only — no browser engine, so no possibility of a network call, and
+nothing new to bundle. `mail.structured_rows` supplies rows; the renderer
+measures them, sizes a canvas to the content, then draws.
+
+- **A 2-cell row is drawn label-left / value-right on one baseline.** This is
+  the case worth rendering: it reproduces receipt structure that a line-oriented
+  reader would have to infer.
+- **Characters the font cannot draw are stripped** (`_UNDRAWABLE`: emoji,
+  dingbats, arrows, private-use icon fonts). Pillow draws them as tofu boxes,
+  which OCR reads as invented words.
+- **No borders or rules are drawn.** Horizontal lines make Tesseract emit
+  spurious `—`/`_` words — the same reason `imaging.py` despeckles.
+- Measured on `data/Unread.mbox`, the render path returns OCR at ~93% mean
+  confidence and extracts date, category, merchant and amount identically to
+  the old text path on all five receipts.
+
+Be clear-eyed about the trade: the renderer draws text the app already holds, so
+OCR is re-reading our own drawing and cannot beat parsing that text directly.
+What it buys is a picture to review against, and the 2-cell layout rule. Judge
+changes here against `--self-test data/Unread.mbox`, not by eye.
 
 ### Config layering
 
@@ -178,3 +220,13 @@ day-first dates. Two subtleties:
 
 Every extracted value is a *suggestion*. The review step exists because OCR on a
 creased receipt is sometimes wrong, so never silently auto-save an entry.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

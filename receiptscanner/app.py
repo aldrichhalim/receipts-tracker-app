@@ -85,8 +85,9 @@ def _shrink(image: Image.Image, max_side: int = PREVIEW_MAX_SIDE) -> Image.Image
 class Processed:
     """Pipeline result, reduced to what the UI needs to hold in memory.
 
-    The previews are None for e-receipts parsed straight out of an email, which
-    have no image at all.
+    Every kind of receipt now carries previews: a photo is scanned, an e-receipt
+    is rendered from its markup. The previews stay optional so a future
+    image-less path does not have to fake one.
     """
 
     record: dict[str, Any]
@@ -107,8 +108,6 @@ class Processed:
             scanned = _shrink(to_pil(output.scan.scanned))
             original = _shrink(to_pil(output.scan.original_bgr), 1400)
             stages = list(output.scan.stages)
-        elif output.email is not None:
-            stages = ["parsed from email body (no image, OCR skipped)"]
 
         return cls(
             record=output.as_record(config),
@@ -141,8 +140,13 @@ class QueueItem:
         return self.label or self.path.name
 
     @property
-    def is_email_text(self) -> bool:
-        """An e-receipt with no image: parsed from the body, never OCR'd."""
+    def is_email_only(self) -> bool:
+        """An e-receipt that brought no photo of its own.
+
+        It still ends up with an image — the markup is rendered — but that image
+        is generated, so its hash changes between runs and duplicate detection
+        has to go by Message-ID instead.
+        """
         return self.email is not None and not self.email.images
 
 
@@ -764,7 +768,7 @@ class ReceiptScannerApp(tk.Tk):
                         )
                         known.add(image)
                         added_images += 1
-                elif receipt.body_text.strip():
+                elif receipt.body_html.strip() or receipt.body_text.strip():
                     self.items.append(
                         QueueItem(
                             path=mbox_path,
@@ -901,14 +905,13 @@ class ReceiptScannerApp(tk.Tk):
             )
             return
 
-        # Text e-receipts never touch Tesseract, so only insist on it when the
-        # batch actually contains an image to read.
-        if any(not self.items[index].is_email_text for index in pending):
-            try:
-                get_engine()
-            except OcrUnavailableError as exc:
-                messagebox.showerror("Tesseract not available", str(exc))
-                return
+        # Every kind of item reaches OCR now: e-receipts are rendered to an
+        # image first rather than read as text, so Tesseract is always required.
+        try:
+            get_engine()
+        except OcrUnavailableError as exc:
+            messagebox.showerror("Tesseract not available", str(exc))
+            return
 
         self._cancel.clear()
         self.process_button.config(state=tk.DISABLED)
@@ -939,7 +942,7 @@ class ReceiptScannerApp(tk.Tk):
                 self._events.put(("stage", _index, message))
 
             try:
-                if item.is_email_text:
+                if item.is_email_only:
                     output = process_email(
                         item.email, self.config_data, progress=report
                     )
@@ -1052,7 +1055,7 @@ class ReceiptScannerApp(tk.Tk):
 
     def _warn_if_duplicate(self, item: QueueItem, processed: Processed) -> None:
         existing = None
-        if item.is_email_text:
+        if item.is_email_only:
             existing = self.store.find_by_message_id(
                 processed.record.get("email_message_id") or ""
             )
@@ -1160,18 +1163,11 @@ class ReceiptScannerApp(tk.Tk):
             self.ocr_text.delete("1.0", tk.END)
             self.ocr_text.insert("1.0", form.get("ocr_text", processed.ocr_text))
 
-            if item.is_email_text:
-                self.ocr_box.config(text="Email receipt text (editable)")
-                sender = processed.record.get("email_from") or "unknown sender"
-                self.ocr_meta.config(
-                    text=f"{processed.ocr_words} words · from {sender}"
-                )
-            else:
-                self.ocr_box.config(text="OCR result (editable)")
-                self.ocr_meta.config(
-                    text=f"{processed.ocr_words} words · mean confidence {processed.ocr_confidence:.0f}% · "
-                    f"lang {processed.record.get('ocr_lang', '?')}"
-                )
+            self.ocr_box.config(text="OCR result (editable)")
+            self.ocr_meta.config(
+                text=f"{processed.ocr_words} words · mean confidence {processed.ocr_confidence:.0f}% · "
+                f"lang {processed.record.get('ocr_lang', '?')}"
+            )
             self.stage_label.config(text="Pipeline: " + " → ".join(processed.stages))
             self.save_button.config(
                 text="Update entry" if item.status == SAVED else "Save & Next  ⌘S"
@@ -1379,41 +1375,13 @@ class ReceiptScannerApp(tk.Tk):
         self._zoom = max(0.1, min(6.0, self._zoom * factor))
         self._render_image()
 
-    def _canvas_message(self, *lines: str) -> None:
-        self._photo = None
-        self.zoom_label.config(text="—")
-        width = max(self.canvas.winfo_width(), 1)
-        height = max(self.canvas.winfo_height(), 1)
-        self.canvas.create_text(
-            width / 2,
-            height / 2,
-            text="\n".join(lines),
-            fill="#d4d4d8",
-            justify=tk.CENTER,
-            font=("Helvetica", 13),
-            width=max(width - 60, 120),
-        )
-
     def _render_image(self) -> None:
         self._render_job = None
         image = self._current_preview()
         self.canvas.delete("all")
         if image is None:
-            item = (
-                self.items[self.current_index]
-                if self.current_index is not None
-                else None
-            )
-            if item is not None and item.is_email_text and item.processed is not None:
-                self._canvas_message(
-                    "✉  E-receipt with no image",
-                    "",
-                    "The figures were read straight from the message body,",
-                    "so there was nothing to scan and OCR was skipped.",
-                )
-            else:
-                self._photo = None
-                self.zoom_label.config(text="—")
+            self._photo = None
+            self.zoom_label.config(text="—")
             return
 
         canvas_width = max(self.canvas.winfo_width(), 1)

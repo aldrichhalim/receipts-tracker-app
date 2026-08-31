@@ -17,8 +17,9 @@ HTML are never fetched.
 - **Tesseract OCR** with the Indonesian language model, tuned for Indonesian
   number formats (`1.234.567,89`), month names, and point-of-sale vocabulary.
 - **Gmail `.mbox` import** that expands a mailbox export into the same review
-  queue as photos, reading HTML e-receipts as text directly (no OCR needed)
-  and running attached photos through the normal pipeline.
+  queue as photos, drawing HTML e-receipts as an image so they can be reviewed
+  and read like any other receipt, and running attached photos through the
+  normal pipeline.
 - **A mandatory human review step** before anything is saved — every OCR
   suggestion is editable, never auto-committed.
 - **CSV reporting** over a date range, with quick presets and a live
@@ -119,14 +120,23 @@ suits it:
   `<output_dir>/../email_attachments/` and goes through the full OpenCV +
   Tesseract pipeline, unchanged. One queue item per attachment.
 - **HTML e-receipts with no image** (Grab, food delivery, airline
-  confirmations). The figures are already text in the message body, so they are
-  read directly and OCR is skipped — exact, rather than a best guess. These show
-  in the queue with a `✉` prefix, and the image pane says so instead of
-  displaying a scan.
+  confirmations). The markup is drawn as an image, and that image goes through
+  OCR like any other receipt, so the review step always has something to check
+  the suggested figures against. These show in the queue with a `✉` prefix, and
+  the image pane displays the render.
 
-The body is flattened with each table row kept on one line, because HTML
-receipts put a label and its amount in sibling cells and naive tag stripping
-separates them, which breaks the line-oriented field extraction.
+The renderer works from table rows, keeping each row's cells apart, because HTML
+receipts put a label and its amount in sibling cells: a two-cell row is drawn
+label-left and value-right on one baseline, reproducing structure that a
+line-oriented reader would otherwise have to infer. It uses Pillow only — no
+browser engine, so there is nothing new to bundle and no way for a render to
+reach the network.
+
+Be clear-eyed about the trade: the renderer draws text the app already holds, so
+OCR re-reads our own drawing and cannot beat parsing that text directly. What it
+buys is a picture to review against and that two-cell layout rule. Measured on
+`data/Unread.mbox`, it reads back at ~93% mean confidence and extracts date,
+category, merchant and amount identically to the older text-only path.
 
 Two deliberate limits:
 
@@ -140,8 +150,8 @@ Re-importing the same mailbox flags already-filed messages during processing,
 matching on `Message-ID` rather than file hash.
 
 `.mbox` parsing itself needs no third-party library — Python's `mailbox` and
-`email` modules handle the format. BeautifulSoup is used only for the
-HTML-to-text step.
+`email` modules handle the format. BeautifulSoup is used only to reduce an HTML
+body to rows of cells, which both the renderer and the text fallback share.
 
 ## Configuration
 
@@ -224,8 +234,10 @@ angle. The SHA-256 is indexed, so re-adding a photo you already filed is
 flagged during processing.
 
 `source_kind` records where a row came from — `image` (a photo you added),
-`email_image` (a photo attached to a message) or `email` (an HTML e-receipt,
-which has no `scanned_path` and no image details). Email rows also carry
+`email_image` (a photo attached to a message) or `email_render` (an e-receipt
+drawn from its markup). Rows written before the render path existed carry the
+legacy value `email`, and have no `scanned_path` or image details. Email rows
+also carry
 `email_message_id`, `email_subject`, `email_from` and `email_date`. Databases
 created before mailbox support are migrated in place on open; existing rows
 default to `source_kind = 'image'`.
@@ -241,7 +253,7 @@ sqlite3 ~/Documents/ReceiptScanner/receipts.db \
 .venv/bin/python -m PyInstaller --noconfirm --clean ReceiptScanner.spec
 ```
 
-Produces `dist/ReceiptScanner.app` (~178 MB) with OpenCV, the Tesseract binary
+Produces `dist/ReceiptScanner.app` (~182 MB) with OpenCV, the Tesseract binary
 and its dylibs, and the `ind` + `eng` models all embedded — it runs on a Mac
 with neither Homebrew nor Tesseract installed. Edit `BUNDLE_LANGUAGES` in the
 spec to change which models ship.
@@ -272,7 +284,8 @@ another machine).
 | `receiptscanner/config.py` | Config loading, path resolution |
 | `receiptscanner/resources.py` | Finds Tesseract and tessdata, frozen or not |
 | `receiptscanner/imaging.py` | OpenCV pipeline |
-| `receiptscanner/mail.py` | `.mbox` reading, attachment extraction, HTML → text |
+| `receiptscanner/mail.py` | `.mbox` reading, attachment extraction, HTML → rows |
+| `receiptscanner/render.py` | drawing an e-receipt's markup as an image for OCR |
 | `receiptscanner/ocr.py` | Tesseract wrapper |
 | `receiptscanner/parsing.py` | OCR text → date, category, name, amount |
 | `receiptscanner/pipeline.py` | Ties the stages together |

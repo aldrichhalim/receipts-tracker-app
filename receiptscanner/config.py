@@ -66,6 +66,20 @@ BUILTIN_DEFAULTS: dict[str, Any] = {
         "min_blob_area": 25,
         "border_px": 24,
     },
+    # How an HTML e-receipt is drawn before OCR. psm 4 ("single column of
+    # variable-size text") reads a rendered label/amount layout better than the
+    # psm 6 used for photographed receipts.
+    "email_render": {
+        "width": 1600,
+        "font_size": 26,
+        "header_font_size": 34,
+        "line_spacing": 12,
+        "margin": 48,
+        "column_gap": 80,
+        "max_height": 20000,
+        "font_path": "",
+        "psm": 4,
+    },
 }
 
 
@@ -191,6 +205,12 @@ class Config:
     def preprocess(self) -> dict[str, Any]:
         merged = dict(BUILTIN_DEFAULTS["preprocess"])
         merged.update(self.get("preprocess", default={}) or {})
+        return merged
+
+    @property
+    def email_render(self) -> dict[str, Any]:
+        merged = dict(BUILTIN_DEFAULTS["email_render"])
+        merged.update(self.get("email_render", default={}) or {})
         return merged
 
     def ensure_directories(self) -> None:

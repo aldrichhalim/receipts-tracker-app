@@ -49,7 +49,13 @@ def self_test(paths: list[str]) -> int:
 
     def report(output, label: str) -> int:
         suggestion = output.suggestion
-        if output.scan is not None:
+        if output.rendered:
+            print(
+                f"  [render] conf={output.ocr.mean_confidence} "
+                f"words={output.ocr.word_count}"
+            )
+            print(f"  render -> {output.scanned_path}")
+        elif output.scan is not None:
             print(
                 f"  [image] detected={output.scan.document_detected} "
                 f"conf={output.ocr.mean_confidence} words={output.ocr.word_count}"
@@ -88,10 +94,10 @@ def self_test(paths: list[str]) -> int:
                             failures += report(
                                 process_image(image, config, email=receipt), image.name
                             )
-                    elif receipt.body_text.strip():
+                    elif receipt.body_html.strip() or receipt.body_text.strip():
                         failures += report(process_email(receipt, config), path.name)
                     else:
-                        print("  (no image and no body text; skipped)")
+                        print("  (no image and no body; skipped)")
                 except Exception as exc:
                     print(f"  FAIL: {type(exc).__name__}: {exc}")
                     failures += 1

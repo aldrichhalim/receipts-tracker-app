@@ -17,3 +17,9 @@ data/
 
 # macOS
 .DS_Store
+
+# Knowledge graph outputs and the local agent skill install
+graphify-out/
+.graphify/
+.graphify_*.json
+.claude/
