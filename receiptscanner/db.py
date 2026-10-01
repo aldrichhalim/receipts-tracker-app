@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import unicodedata
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Mapping, NamedTuple
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS receipts (
@@ -43,6 +47,11 @@ CREATE TABLE IF NOT EXISTS receipts (
     currency          TEXT,
     notes             TEXT,
 
+    -- derived by dedupe_key(); never supplied by a caller. NULL opts a row out
+    -- of de-duplication. Its UNIQUE index is created by _migrate, not here: an
+    -- older table must be backfilled and de-duplicated before it can exist.
+    dedupe_key        TEXT,
+
     -- image details
     source_width      INTEGER,
     source_height     INTEGER,
@@ -75,6 +84,12 @@ V2_COLUMNS = (
     ("email_from", "TEXT"),
     ("email_date", "TEXT"),
 )
+
+# Added in v3. Not in COLUMNS: it is derived inside save(), so a caller's record
+# can never carry a stale key into the table.
+V3_COLUMNS = (("dedupe_key", "TEXT"),)
+
+DEDUPE_INDEX = "idx_receipts_dedupe"
 
 COLUMNS = (
     "source_kind",
@@ -115,44 +130,187 @@ def _now() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+class SaveResult(NamedTuple):
+    id: int
+    created: bool  # False when an existing row was updated instead
+
+
+def _cents(amount: Any) -> int | None:
+    """Whole minor units, so REAL-versus-REAL equality can never split a match.
+
+    Goes through the float's shortest repr (0.1 + 0.2 is "0.30000000000000004",
+    not an exact binary expansion), then rounds half up.
+    """
+    try:
+        value = Decimal(str(amount))
+    except (InvalidOperation, ValueError):
+        return None
+    if not value.is_finite():
+        return None
+    return int((value * 100).to_integral_value(ROUND_HALF_UP))
+
+
+def _normalize_title(name: Any) -> str:
+    if not name:
+        return ""
+    folded = unicodedata.normalize("NFKC", str(name)).casefold()
+    return " ".join(folded.split())
+
+
+def dedupe_key(record: Mapping[str, Any]) -> str | None:
+    """What makes two entries the same purchase: title, amount, currency, date.
+
+    Titles compare case-, width- and whitespace-insensitively; amounts compare as
+    whole cents. Returns None, opting the entry out of de-duplication, when the
+    title, amount or date is missing: two untitled receipts that share an amount
+    and a day are not evidence of one purchase.
+    """
+    title = _normalize_title(record.get("name"))
+    cents = _cents(record.get("amount"))
+    entry_date = str(record.get("entry_date") or "").strip()
+    if not title or cents is None or not entry_date:
+        return None
+    currency = str(record.get("currency") or "").strip().upper()
+    # JSON, not a joined string: a title containing "|" cannot forge a collision.
+    return json.dumps(
+        [title, cents, currency, entry_date], ensure_ascii=False, separators=(",", ":")
+    )
+
+
 class ReceiptStore:
     """Thin data layer. One connection, used only from the UI thread."""
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(str(self.path))
+        # Autocommit: transactions are explicit (see _transaction), because
+        # executescript() would otherwise commit one out from under a migration.
+        self._connection = sqlite3.connect(str(self.path), isolation_level=None)
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA foreign_keys=ON")
-        self._migrate()
+        try:
+            self._migrate()
+        except BaseException:
+            self.close()
+            raise
 
-    def _migrate(self) -> None:
-        with self._connection:
-            existed = bool(
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except BaseException:
+            self._connection.execute("ROLLBACK")
+            raise
+        self._connection.execute("COMMIT")
+
+    def _apply_schema(self) -> None:
+        """Run SCHEMA one statement at a time, inside the caller's transaction."""
+        buffer = ""
+        for line in SCHEMA.splitlines(keepends=True):
+            buffer += line
+            if sqlite3.complete_statement(buffer):
+                self._connection.execute(buffer)
+                buffer = ""
+
+    def _row_count(self) -> int:
+        return int(
+            self._connection.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
+        )
+
+    def _backup_before_migration(self) -> Path:
+        """A consistent copy beside the database, taken before anything changes."""
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = self.path.with_name(f"{self.path.name}.bak-{stamp}")
+        counter = 1
+        while target.exists():
+            target = self.path.with_name(f"{self.path.name}.bak-{stamp}-{counter}")
+            counter += 1
+
+        destination = sqlite3.connect(str(target))
+        try:
+            self._connection.backup(destination)
+            destination.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            destination.close()
+        # The copy inherits WAL mode, and SQLite leaves its -shm (and sometimes an
+        # empty -wal) behind. With no connection open they are safe to remove.
+        for suffix in ("-shm", "-wal"):
+            sidecar = Path(f"{target}{suffix}")
+            if sidecar.exists() and (suffix == "-shm" or sidecar.stat().st_size == 0):
+                sidecar.unlink()
+        return target
+
+    def _collapse_duplicates(self) -> None:
+        """Backfill every row's key and fold exact duplicates into the oldest.
+
+        The survivor keeps its own fields, provenance and created_at; it only
+        borrows notes from a discarded duplicate when it has none of its own.
+        """
+        groups: dict[str, list[sqlite3.Row]] = {}
+        for row in self._connection.execute(
+            "SELECT id, name, amount, currency, entry_date, notes "
+            "FROM receipts ORDER BY id"
+        ).fetchall():
+            key = dedupe_key(dict(row))
+            if key is not None:
+                groups.setdefault(key, []).append(row)
+
+        for key, members in groups.items():
+            survivor, duplicates = members[0], members[1:]
+            notes = survivor["notes"]
+            if not (notes or "").strip():
+                notes = next(
+                    (d["notes"] for d in duplicates if (d["notes"] or "").strip()),
+                    notes,
+                )
+            for duplicate in duplicates:
                 self._connection.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='receipts'"
-                ).fetchone()
+                    "DELETE FROM receipts WHERE id=?", (duplicate["id"],)
+                )
+            self._connection.execute(
+                "UPDATE receipts SET dedupe_key=?, notes=? WHERE id=?",
+                (key, notes, survivor["id"]),
             )
 
-            # Add missing columns first: SCHEMA creates an index over
-            # email_message_id, which a pre-v2 table does not have yet.
+    def _migrate(self) -> None:
+        connection = self._connection
+        existed = bool(
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='receipts'"
+            ).fetchone()
+        )
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        upgrading = existed and version < SCHEMA_VERSION
+
+        # Before anything changes. A database with no rows has nothing to lose.
+        if upgrading and self._row_count():
+            self._backup_before_migration()
+
+        # One transaction: a failure anywhere, including the ALTERs, rolls back.
+        with self._transaction():
             if existed:
+                # Columns first: SCHEMA indexes email_message_id, which a pre-v2
+                # table does not have yet.
                 present = {
                     row["name"]
-                    for row in self._connection.execute("PRAGMA table_info(receipts)")
+                    for row in connection.execute("PRAGMA table_info(receipts)")
                 }
-                for name, definition in V2_COLUMNS:
+                for name, definition in (*V2_COLUMNS, *V3_COLUMNS):
                     if name not in present:
-                        self._connection.execute(
+                        connection.execute(
                             f"ALTER TABLE receipts ADD COLUMN {name} {definition}"
                         )
 
-            self._connection.executescript(SCHEMA)
-
-            current = self._connection.execute("PRAGMA user_version").fetchone()[0]
-            if current != SCHEMA_VERSION:
-                self._connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+            self._apply_schema()
+            if upgrading:
+                self._collapse_duplicates()
+            # Last: it cannot exist until the rows are backfilled and de-duplicated.
+            connection.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {DEDUPE_INDEX} ON receipts(dedupe_key)"
+            )
+            connection.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     def close(self) -> None:
         try:
@@ -161,30 +319,59 @@ class ReceiptStore:
             pass
 
     # -- writes ----------------------------------------------------------
-    def save(self, record: dict[str, Any], record_id: int | None = None) -> int:
+    def save(self, record: dict[str, Any], record_id: int | None = None) -> SaveResult:
+        """Insert, or update the row this entry belongs to.
+
+        An entry belongs to the row sharing its dedupe_key, so saving the same
+        purchase twice updates one row instead of counting it twice. With
+        `record_id` the caller is editing a saved row: that row is updated in
+        place, and if the edit makes it match a *different* row the two are
+        merged onto that other row, the one being edited going away.
+        """
         payload = {key: record.get(key) for key in COLUMNS}
-        payload["updated_at"] = _now()
+        payload["dedupe_key"] = dedupe_key(payload)
+        payload["updated_at"] = now = _now()
 
-        with self._connection:
-            if record_id is not None:
+        with self._transaction():
+            match = None
+            if payload["dedupe_key"] is not None:
+                match = self._connection.execute(
+                    "SELECT id, notes FROM receipts WHERE dedupe_key=?",
+                    (payload["dedupe_key"],),
+                ).fetchone()
+
+            target = record_id
+            if match is not None and match["id"] != record_id:
+                target = match["id"]
+                if record_id is not None:  # an edit collided with another row
+                    self._connection.execute(
+                        "DELETE FROM receipts WHERE id=?", (record_id,)
+                    )
+                # A repeat that brings no notes of its own must not erase the
+                # ones already written. (An in-place edit is different: there,
+                # clearing the notes is the user's deliberate act.)
+                if not (payload.get("notes") or "").strip():
+                    payload["notes"] = match["notes"]
+
+            if target is not None:
                 assignments = ", ".join(f"{key}=:{key}" for key in payload)
-                self._connection.execute(
+                cursor = self._connection.execute(
                     f"UPDATE receipts SET {assignments} WHERE id=:id",
-                    {**payload, "id": record_id},
+                    {**payload, "id": target},
                 )
-                return record_id
+                if cursor.rowcount:
+                    return SaveResult(int(target), False)
 
-            payload["created_at"] = _now()
+            payload["created_at"] = now
             names = ", ".join(payload)
             placeholders = ", ".join(f":{key}" for key in payload)
             cursor = self._connection.execute(
                 f"INSERT INTO receipts ({names}) VALUES ({placeholders})", payload
             )
-            return int(cursor.lastrowid)
+            return SaveResult(int(cursor.lastrowid), True)
 
     def delete(self, record_id: int) -> None:
-        with self._connection:
-            self._connection.execute("DELETE FROM receipts WHERE id=?", (record_id,))
+        self._connection.execute("DELETE FROM receipts WHERE id=?", (record_id,))
 
     # -- reads -----------------------------------------------------------
     def find_by_hash(self, sha256: str) -> sqlite3.Row | None:

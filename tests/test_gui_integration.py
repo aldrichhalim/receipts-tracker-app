@@ -158,3 +158,87 @@ def test_the_choice_survives_navigating_away_and_back(app, tmp_path):
     assert app.var_currency.get() == "IDR"
     app._select_index(0)
     assert app.var_currency.get() == "USD"
+
+
+def status(app) -> str:
+    return app.status_label.cget("text")
+
+
+def save_item(app, index):
+    app._select_index(index)
+    app.update()
+    app.save_current()
+
+
+def test_the_first_save_says_saved(app, store, tmp_path):
+    app.mailbox_path = mailbox(tmp_path, "44.000")
+    app.add_mailbox()
+    process_everything(app)
+    save_item(app, 0)
+    assert status(app).startswith("Saved")
+    assert len(store.recent()) == 1
+
+
+def test_importing_and_saving_the_same_mailbox_again_updates_instead_of_doubling(
+    app, store, tmp_path
+):
+    app.mailbox_path = mailbox(tmp_path, "44.000", "64.500")
+
+    app.add_mailbox()
+    process_everything(app)
+    for index in range(2):
+        save_item(app, index)
+    assert len(store.recent()) == 2
+    ids = {r["id"] for r in store.recent()}
+
+    app.add_mailbox()  # the same file, a second time
+    process_everything(app)
+    assert len(app.items) == 4
+    for index in (2, 3):
+        save_item(app, index)
+
+    assert len(store.recent()) == 2  # not 4
+    assert {r["id"] for r in store.recent()} == ids
+    assert "Updated existing entry" in status(app)
+    assert app.items[2].db_id == app.items[0].db_id
+
+
+def test_two_copies_of_one_receipt_in_a_single_mailbox_become_one_entry(
+    app, store, tmp_path
+):
+    app.mailbox_path = mailbox(tmp_path, "44.000", "44.000")  # same sender, amount, day
+    app.add_mailbox()
+    process_everything(app)
+
+    save_item(app, 0)
+    assert "Updated" not in status(app)
+    save_item(app, 1)
+
+    assert len(store.recent()) == 1
+    assert "Updated existing entry" in status(app)
+
+
+def test_different_amounts_remain_separate_entries(app, store, tmp_path):
+    app.mailbox_path = mailbox(tmp_path, "44.000", "64.500")
+    app.add_mailbox()
+    process_everything(app)
+    save_item(app, 0)
+    save_item(app, 1)
+    assert len(store.recent()) == 2
+    assert not status(app).startswith("Updated")
+
+
+def test_editing_a_saved_entry_updates_it_in_place(app, store, tmp_path):
+    app.mailbox_path = mailbox(tmp_path, "44.000")
+    app.add_mailbox()
+    process_everything(app)
+    save_item(app, 0)
+
+    app._select_index(0)
+    app.var_amount.set("45000")
+    app.save_current()
+
+    (row,) = store.recent()
+    assert row["amount"] == 45000.0
+    assert status(app).startswith("Updated")
+    assert "existing" not in status(app)

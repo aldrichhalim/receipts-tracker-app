@@ -1350,14 +1350,16 @@ class ReceiptScannerApp(tk.Tk):
         record = dict(item.processed.record)
         record.update(entry)
 
+        previous_id = item.db_id
         try:
-            item.db_id = self.store.save(record, record_id=item.db_id)
+            result = self.store.save(record, record_id=previous_id)
         except Exception as exc:
             messagebox.showerror(
                 "Database error", f"Could not save the entry:\n\n{exc}"
             )
             return
 
+        item.db_id = result.id
         item.status = SAVED
         item.detail = ""
         item.form = {
@@ -1367,8 +1369,18 @@ class ReceiptScannerApp(tk.Tk):
             "ocr_text": entry["ocr_text"],
         }
         self._update_row(index)
+        if result.created:
+            verb = "Saved"
+        elif previous_id is None:
+            # Nothing was saved from this item before, yet a row already carried
+            # these same details: it was updated rather than counted twice.
+            verb = "Updated existing entry"
+        elif previous_id != result.id:
+            verb = "Merged into existing entry"
+        else:
+            verb = "Updated"
         self._set_status(
-            f"Saved “{entry['name'] or item.name}” — {entry['currency']} "
+            f"{verb} “{entry['name'] or item.name}” — {entry['currency']} "
             f"{entry['amount']:,.2f} (id {item.db_id})."
         )
 

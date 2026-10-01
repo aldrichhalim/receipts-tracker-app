@@ -150,3 +150,26 @@ def make_v1_database(path: Path, rows: list[dict[str, Any]]) -> Path:
     finally:
         connection.close()
     return path
+
+
+def make_v2_database(path: Path, rows: list[dict[str, Any]]) -> Path:
+    """A v2 database: email columns present, user_version 2, no dedupe key."""
+    import sqlite3
+
+    connection = sqlite3.connect(str(path))
+    try:
+        connection.executescript(V1_DDL)
+        for name, definition in (
+            ("source_kind", "TEXT DEFAULT 'image'"),
+            ("email_message_id", "TEXT"),
+            ("email_subject", "TEXT"),
+            ("email_from", "TEXT"),
+            ("email_date", "TEXT"),
+        ):
+            connection.execute(f"ALTER TABLE receipts ADD COLUMN {name} {definition}")
+        _insert_rows(connection, rows)
+        connection.execute("PRAGMA user_version=2")
+        connection.commit()
+    finally:
+        connection.close()
+    return path

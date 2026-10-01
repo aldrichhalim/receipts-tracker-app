@@ -127,9 +127,10 @@ add it to `db.V2_COLUMNS`-style migration if existing databases must gain it.
 
 `source_kind` distinguishes `image` / `email_image` (photo attached to a
 message) / `email_render` (drawn from markup). `email` is legacy: rows written
-before the render path existed. Duplicate detection differs by kind — photos
-match on `source_sha256`, e-receipts on `email_message_id`, because a rendered
-image's hash is a property of the renderer rather than of the receipt.
+before the render path existed. The *warning* shown while processing differs by
+kind — photos match on `source_sha256`, e-receipts on `email_message_id`,
+because a rendered image's hash is a property of the renderer rather than of the
+receipt. What actually prevents a double entry is the dedupe key below.
 
 `report.py` holds the CSV layout and date presets with no Tk import, so the
 export can be tested headlessly; `ReportDialog` in `app.py` is only the window
@@ -155,6 +156,42 @@ decimal" rule already reads `10.50`, `1,234.56` and BCA's `USD 56,48`.
 `config.currency`. Reports total **per currency** (`ReportSummary.totals`);
 `.total` is the cross-currency sum and is only meaningful for a single one. The
 CSV has a `Currency` column.
+
+### Duplicates (`db.py`)
+
+One row per **(title, amount, currency, date)**. `dedupe_key()` builds a JSON
+key from the title (NFKC, casefolded, whitespace-collapsed), the amount as whole
+cents (`Decimal` of the float's repr, half-up, so `0.1+0.2` equals `0.3`), the
+upper-cased currency and the date. It returns `None` — opting out — when the
+title, amount or date is missing, so untitled receipts are never merged. It is
+stored in `receipts.dedupe_key` behind a UNIQUE index (SQLite permits many
+NULLs).
+
+- `save()` is an **upsert** returning `SaveResult(id, created)`. A match updates
+  in place (same id, original `created_at`; empty new notes keep old ones). With
+  `record_id` it edits that row; if the edit now matches a *different* row, the
+  two merge onto the other and the edited row is deleted. A stale `record_id`
+  inserts instead of silently updating nothing.
+- `dedupe_key` is deliberately **not** in `COLUMNS`: it is derived inside
+  `save()`, so a caller's record can never carry a stale key.
+- **Migration v3** backs the database up first (sqlite backup API →
+  `receipts.db.bak-YYYYMMDD-HHMMSS`, only if it has rows), then in one
+  transaction adds the column, backfills, folds duplicates into the lowest id
+  (the survivor keeps its own fields and provenance, borrowing notes only if it
+  has none), and creates the UNIQUE index **last**. The index must not be in
+  `SCHEMA`: `executescript(SCHEMA)` runs on every open and would fail against
+  un-backfilled rows.
+- **Transactions are explicit** (`isolation_level=None` + `_transaction()`),
+  because `executescript()` silently commits an open transaction, which would
+  break an all-or-nothing migration. `_apply_schema` therefore runs `SCHEMA`
+  statement by statement. The explicit `ROLLBACK` matters on a live connection
+  (a failed merge); on a failed *migration* the connection is closed, and
+  closing rolls back by itself, so only `test_db_dedupe.py::TestAtomicity`
+  actually proves it.
+- Known limit: the title is the weak link. The same charge titled two ways is
+  two entries (BCA notifications are titled with the sender address, forwards
+  and merchant-line variants differ), and a void/reversal with the same title,
+  amount and date merges into the original instead of cancelling it.
 
 ### Mailbox ingest (`mail.py`)
 

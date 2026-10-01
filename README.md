@@ -25,6 +25,8 @@ HTML are never fetched.
 - **Rupiah and US dollar receipts.** The currency is read off the receipt (`Rp`,
   `IDR`, `$`, `USD`), shown in a dropdown you can correct before saving, and
   decides how dates and amounts are read.
+- **No double entries.** Saving the same purchase twice updates one row instead
+  of counting it twice (see [Duplicates](#duplicates)).
 - **CSV reporting** over a date range, with quick presets and a live
   entry-count/total preview before export.
 - **A standalone macOS `.app`** with OpenCV, Tesseract, and the language
@@ -168,7 +170,8 @@ Two deliberate limits:
   spacers. Tune with `min_attachment_bytes` in `mail.iter_mbox`.
 
 Re-importing the same mailbox flags already-filed messages during processing,
-matching on `Message-ID` rather than file hash.
+matching on `Message-ID` rather than file hash. What actually prevents a double
+entry is the rule in [Duplicates](#duplicates).
 
 `.mbox` parsing itself needs no third-party library — Python's `mailbox` and
 `email` modules handle the format. BeautifulSoup is used only to reduce an HTML
@@ -278,6 +281,31 @@ sqlite3 ~/Documents/ReceiptScanner/receipts.db \
   "SELECT entry_date, category, name, amount FROM receipts ORDER BY entry_date;"
 ```
 
+## Duplicates
+
+An entry is identified by **title + amount + currency + date**. Saving a second
+entry with the same four values updates the existing row — same `id`, original
+`created_at`, notes kept if the new entry has none — instead of adding another.
+This holds across sessions and across sources, so re-importing a mailbox or
+filing the same purchase from a photo and an email gives one row.
+
+Titles compare ignoring case, width and extra whitespace, and amounts compare as
+whole cents, so `44000` and `44000.00` match. An entry with no title, amount or
+date is never merged, since two untitled receipts that share an amount and a day
+are not evidence of one purchase. Editing a saved entry so that it matches a
+*different* row merges the two onto that row.
+
+The rule is enforced by a unique index, not just by the app. Opening a database
+from an older version **backs it up first** (`receipts.db.bak-YYYYMMDD-HHMMSS`
+beside it), then folds any existing duplicates into the oldest row of each
+group, all in one transaction: if anything fails, nothing is changed.
+
+Limits worth knowing: the title is part of the key, so the same charge titled
+two different ways is two entries; a refund or void with the same title, amount
+and date as the original merges into it instead of cancelling it; and the date
+used when a receipt prints none is the email's own header date, which carries
+that header's timezone.
+
 ## Building the app
 
 ```bash
@@ -320,7 +348,7 @@ another machine).
 | `receiptscanner/ocr.py` | Tesseract wrapper |
 | `receiptscanner/parsing.py` | OCR text → date, category, name, amount |
 | `receiptscanner/pipeline.py` | Ties the stages together |
-| `receiptscanner/db.py` | SQLite storage |
+| `receiptscanner/db.py` | SQLite storage, the de-duplication key, schema migrations |
 | `receiptscanner/report.py` | CSV export and date-range presets |
 | `receiptscanner/app.py` | tkinter UI |
 | `tests/` | pytest suite (see [Running from source](#running-from-source)) |
