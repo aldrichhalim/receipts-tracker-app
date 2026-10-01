@@ -7,4 +7,4 @@ OpenCV preprocessing + local Tesseract OCR + SQLite bookkeeping.
 # would orphan existing users' files. APP_TITLE is only what the user sees.
 APP_NAME = "ReceiptScanner"
 APP_TITLE = "Narmada"
-__version__ = "1.1.0"
+__version__ = "1.2.0"
