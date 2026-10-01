@@ -58,10 +58,13 @@ Requirements: macOS, Python 3.11+, and [Homebrew](https://brew.sh) for
 Tesseract (the built app embeds its own copy).
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 brew install tesseract tesseract-lang
-.venv/bin/python main.py
+make setup     # creates .venv and installs everything from pyproject.toml
+make run       # launches the app
 ```
+
+`make` on its own lists every task. Without it, `.venv/bin/pip install -r
+requirements.txt` and `.venv/bin/python main.py` do the same.
 
 The pipeline code itself has no macOS-specific parts. The build tooling and app
 bundling target macOS.
@@ -311,9 +314,12 @@ step exists because OCR on a creased receipt will sometimes be wrong.
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest -m "not ocr and not gui and not fixtures"   # ~2 s, runs anywhere
-.venv/bin/python -m pytest                                              # everything this machine can run
+make test-fast    # ~5 s, needs no Tesseract, display or data/
+make test         # everything this machine can run (~1 minute)
 ```
+
+(`make test-fast` is `pytest -m "not ocr and not gui and not fixtures"`, and
+`make test` is a plain `pytest`; the configuration lives in `pyproject.toml`.)
 
 The `ocr`, `gui` and `fixtures` groups skip themselves when Tesseract, a display
 or private sample data is missing, so a plain `pytest` is green on a fresh clone.
@@ -345,25 +351,54 @@ the language models resolve.
 ### Building the app
 
 ```bash
-.venv/bin/python -m PyInstaller --noconfirm --clean ReceiptScanner.spec
+make build      # dist/ReceiptScanner.app
+make verify     # prove it is self-contained
+make package    # dist/ReceiptScanner-v<version>-macos-<arch>.zip
+make clean      # remove build output
 ```
 
-This produces `dist/ReceiptScanner.app` (~182 MB) with OpenCV, the Tesseract
-binary and its dylibs, and the `ind` and `eng` models embedded, so it runs on a
-Mac with neither Homebrew nor Tesseract installed. Edit `BUNDLE_LANGUAGES` in the
-spec to change which models ship.
+`make build` runs PyInstaller on `ReceiptScanner.spec` and produces
+`dist/ReceiptScanner.app` (~182 MB) with OpenCV, the Tesseract binary and its
+dylibs, and the `ind` and `eng` models embedded, so it runs on a Mac with neither
+Homebrew nor Tesseract installed. Edit `BUNDLE_LANGUAGES` in the spec to change
+which models ship.
+
+`make verify` runs the built app's self-test with Homebrew off the `PATH` and a
+throwaway home directory, which proves it is using the embedded copies and cannot
+touch your own data. `make clean` removes `build/`, `dist/`, caches and
+`__pycache__` folders, and leaves `.venv`, `data/` and your configuration alone.
 
 The Dock icon is generated at build time from `assets/logo-app.png`, the single
 master. The spec adds the standard macOS margin around it and writes every
 required size, so replacing that one PNG is all it takes to change the icon.
 
-Verify a build without clicking through the GUI, with Homebrew off the path to
-prove it is using the embedded copies:
+### Releasing
+
+The version is defined once, as `__version__` in `receiptscanner/__init__.py`.
+`pyproject.toml`, the `.app` bundle and the release tag all follow it. To publish:
+
+1. Bump `__version__`, commit, and push to `master`.
+2. Run `make release`.
+
+`make release` refuses to start unless you are on `master`, have no uncommitted
+changes, are level with `origin/master`, and the tag `v<version>` does not already
+exist, locally or on GitHub. It then runs the tests, builds, verifies and zips the
+app, shows what it is about to publish, and **asks before it touches GitHub**.
+Answering `y` runs `gh release create` with the zip attached, targeting the pushed
+commit. It needs the [GitHub CLI](https://cli.github.com) (`brew install gh`,
+then `gh auth login`).
+
+Options go in the environment:
 
 ```bash
-env -u TESSDATA_PREFIX PATH=/usr/bin:/bin \
-  ./dist/ReceiptScanner.app/Contents/MacOS/ReceiptScanner --self-test data/IMG_5672.jpeg
+DRAFT=1 make release                    # create a draft to review on GitHub first
+NOTES=notes.md make release             # release notes from a file (default: generated)
+TITLE="v1.2.0 — new thing" make release # custom title (default: the tag)
+YES=1 make release                      # skip the confirmation question
 ```
+
+The zip is built for the architecture of the machine that builds it, so a release
+made on Apple Silicon is `macos-arm64`.
 
 ### Project layout
 
@@ -385,6 +420,9 @@ env -u TESSDATA_PREFIX PATH=/usr/bin:/bin \
 | `tests/` | pytest suite |
 | `assets/` | Brand logo and the app-icon master |
 | `ReceiptScanner.spec` | PyInstaller build |
+| `pyproject.toml` | Project metadata, pinned dependencies, test configuration |
+| `Makefile` | `setup`, `run`, `test`, `clean`, `build`, `verify`, `package`, `release` |
+| `scripts/release.sh` | The guarded GitHub release behind `make release` |
 
 ## License
 

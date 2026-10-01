@@ -12,12 +12,12 @@ that is deliberate — keep it that way.
 ## Commands
 
 ```bash
-# Setup (Python 3.14 venv already present at .venv)
-.venv/bin/pip install -r requirements.txt
+# Every task is a make target; `make` lists them. pyproject.toml is the source of
+# truth for metadata, dependency pins and pytest config; requirements.txt just
+# installs it (`-e .[build,test]`).
+make setup                                     # .venv + dependencies (Python 3.14 venv already at .venv)
 brew install tesseract tesseract-lang          # needed for source runs only
-
-# Run the GUI
-.venv/bin/python main.py
+make run                                       # launch the GUI
 
 # Smoke-test the whole pipeline headlessly (pytest covers the logic; this covers the real thing)
 .venv/bin/python main.py --self-test                     # engine/resource checks only
@@ -25,21 +25,21 @@ brew install tesseract tesseract-lang          # needed for source runs only
 .venv/bin/python main.py --self-test data/*.jpeg         # all four photo fixtures
 .venv/bin/python main.py --self-test data/Unread.mbox    # every receipt in a mailbox
 
-# Tests. The fast run needs no Tesseract, display or data/ and takes ~2 s
-.venv/bin/python -m pytest -m "not ocr and not gui and not fixtures"
-.venv/bin/python -m pytest                                  # everything this machine can run (~1 min)
+# Tests. The fast run needs no Tesseract, display or data/ and takes ~5 s
+make test-fast                                              # -m "not ocr and not gui and not fixtures"
+make test                                                   # everything this machine can run (~1 min)
 .venv/bin/python -m pytest tests/test_report.py -k csv      # one file, one test
 
 # Before changing extraction logic, snapshot the real receipts; afterwards diff them
 .venv/bin/python tests/make_golden.py                       # writes data/golden.json (gitignored)
 .venv/bin/python -m pytest -m fixtures
 
-# Build the .app (embeds OpenCV, the tesseract binary + dylibs, ind/eng models, the icon)
-.venv/bin/python -m PyInstaller --noconfirm --clean ReceiptScanner.spec
-
-# Verify a build is genuinely self-contained (Homebrew off the PATH)
-env -u TESSDATA_PREFIX PATH=/usr/bin:/bin \
-  ./dist/ReceiptScanner.app/Contents/MacOS/ReceiptScanner --self-test data/IMG_5672.jpeg
+# Build and ship
+make build      # dist/ReceiptScanner.app (embeds OpenCV, tesseract + dylibs, ind/eng models, the icon)
+make verify     # self-contained check: Homebrew off the PATH, throwaway HOME and config
+make package    # dist/ReceiptScanner-v<version>-macos-<arch>.zip
+make clean      # build/, dist/, caches; keeps .venv, data/ and graphify-out/
+make release    # guarded GitHub release of the current version; asks before publishing
 ```
 
 `data/` holds the private fixtures: four real Indonesian receipt
@@ -48,6 +48,27 @@ runs the full pipeline over whatever you pass and fails if anything yields zero
 text. Point `RECEIPTSCANNER_CONFIG` at a scratch JSON file when running `--self-test`
 by hand so it does not write into `~/Documents/ReceiptScanner`. The pytest suite
 does this itself.
+
+### Build and release
+
+- **The version lives in one place:** `__version__` in `receiptscanner/__init__.py`.
+  `pyproject.toml` reads it (`dynamic`, `attr`), and `ReceiptScanner.spec` reads
+  it as text for the bundle's `CFBundleVersion` (the spec runs before the package
+  is importable). Never type a version number anywhere else.
+- **`make clean` deletes `dist/`, including any release zip you kept there.**
+  `make build` does not clean it, so previous zips survive a rebuild; `make
+  package` only overwrites the zip for the current version.
+- **`scripts/release.sh` is outward-facing.** It runs only through `make release`
+  and checks, in order: `gh` is logged in, branch is `master`, no uncommitted
+  tracked changes, HEAD equals `origin/master`, the tag is free locally and on
+  GitHub. Then it tests, builds, verifies, zips, and asks `[y/N]` before `gh
+  release create` (`YES=1` skips the question, `DRAFT=1` makes a draft). Do not
+  run it on the user's behalf without being asked to publish. Its guards were
+  exercised against a bare repo and a fake `gh` that only logs its arguments;
+  repeat that, never the real `gh`, if you change the script.
+- `requirements.txt` is `-e .[build,test]`, so adding a dependency means editing
+  `pyproject.toml` only. The project is not distributed as a wheel; the `.app` is
+  the deliverable.
 
 ### Tests
 

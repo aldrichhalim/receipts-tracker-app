@@ -5,6 +5,7 @@ language model so the built app runs on a machine with none of them installed.
 Build with:  pyinstaller --noconfirm ReceiptScanner.spec
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -101,6 +102,19 @@ def find_tessdata(binary, languages):
     )
 
 
+def read_version():
+    """The app's version, from the one place it is defined.
+
+    Read as text rather than imported: the spec runs before the package is on
+    sys.path, and importing it would drag the whole app in.
+    """
+    init = Path(SPECPATH) / "receiptscanner" / "__init__.py"
+    match = re.search(r'^__version__\s*=\s*"([^"]+)"', init.read_text(), re.MULTILINE)
+    if match is None:
+        raise SystemExit(f"Could not read __version__ from {init}")
+    return match.group(1)
+
+
 def build_icns(source, destination):
     """Turn the square master PNG into a macOS .icns with the standard margin.
 
@@ -129,6 +143,9 @@ TESSDATA = find_tessdata(TESSERACT, BUNDLE_LANGUAGES)
 
 print(f"[spec] tesseract: {TESSERACT}")
 print(f"[spec] tessdata:  {TESSDATA} -> {', '.join(BUNDLE_LANGUAGES)}")
+
+VERSION = read_version()
+print(f"[spec] version:   {VERSION}")
 
 ICON = build_icns(ICON_SOURCE, Path(tempfile.mkdtemp(prefix="icon-")) / "icon.icns")
 print(f"[spec] icon:      {ICON_SOURCE.name} -> {ICON.name}")
@@ -194,8 +211,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Narmada",
         "CFBundleDisplayName": "Narmada",
-        "CFBundleShortVersionString": "1.1.0",
-        "CFBundleVersion": "1.1.0",
+        "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": VERSION,
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "12.0",
         "NSHumanReadableCopyright": "Narmada: receipt tracker and expense report generator.",

@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "narmada"
+description = "Receipt tracker and expense report generator: OpenCV, Tesseract OCR and SQLite, entirely offline."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Aldrich Halim" }]
+# The version lives in receiptscanner/__init__.py so the app, the .app bundle
+# (ReceiptScanner.spec reads it too) and a release tag can never disagree.
+dynamic = ["version"]
+
+# Exact pins: this is an application, not a library, and these are the versions
+# the tuned OCR pipeline was measured against. requirements.txt installs them.
+dependencies = [
+    "opencv-python-headless==5.0.0.93",  # headless: the GUI is tkinter, so no Qt needed
+    "pytesseract==0.3.13",
+    "pillow==12.3.0",
+    "pillow-heif==1.5.0",                # optional: lets the app open iPhone .HEIC photos
+    "numpy==2.5.1",
+    "beautifulsoup4==4.15.0",            # HTML e-receipt bodies; .mbox itself uses stdlib `mailbox`
+]
+
+[project.optional-dependencies]
+build = [
+    "pyinstaller==6.21.0",
+    "pyinstaller-hooks-contrib==2026.6",
+]
+test = [
+    "pytest==9.1.1",
+]
+
+[project.urls]
+Repository = "https://github.com/aldrichhalim/receipts-tracker-app"
+
+# The deliverable is the PyInstaller .app (see ReceiptScanner.spec), not a wheel.
+# Installing the project (`pip install -e .`) is how dependencies get resolved.
+[tool.setuptools]
+packages = ["receiptscanner"]
+
+[tool.setuptools.dynamic]
+version = { attr = "receiptscanner.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-rfEsX --strict-markers"
+markers = [
+    "ocr: needs the Tesseract binary (skipped when it is not installed)",
+    "fixtures: needs the private data/ fixtures (skipped when absent)",
+    "gui: needs a display for tkinter (skipped when none is available)",
+]
