@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A local-only tkinter desktop app that turns photos of receipts into expense
-entries: OpenCV preprocessing → Tesseract OCR (Indonesian model) → a human
+Narmada (receipt tracker and expense report generator) is a local-only tkinter
+desktop app that turns photos of receipts into expense entries: OpenCV preprocessing → Tesseract OCR (Indonesian model) → a human
 review step → SQLite. There are no network calls anywhere in the pipeline, and
 that is deliberate — keep it that way.
 
@@ -34,7 +34,7 @@ brew install tesseract tesseract-lang          # needed for source runs only
 .venv/bin/python tests/make_golden.py                       # writes data/golden.json (gitignored)
 .venv/bin/python -m pytest -m fixtures
 
-# Build the .app (embeds OpenCV, the tesseract binary + dylibs, ind/eng models)
+# Build the .app (embeds OpenCV, the tesseract binary + dylibs, ind/eng models, the icon)
 .venv/bin/python -m PyInstaller --noconfirm --clean ReceiptScanner.spec
 
 # Verify a build is genuinely self-contained (Homebrew off the PATH)
@@ -238,6 +238,20 @@ OCR is re-reading our own drawing and cannot beat parsing that text directly.
 What it buys is a picture to review against, and the 2-cell layout rule. Judge
 changes here against `--self-test data/Unread.mbox`, not by eye.
 
+### Branding and the app icon
+
+`assets/logo.png` is the brand logo (used by the README) and `assets/logo-app.png`
+is the square icon master. The spec builds `icon.icns` from the master at build
+time (`build_icns`: it adds the macOS artwork margin, 824 of 1024 px, and Pillow
+writes every size), so no generated binary is committed. A full-bleed icon looks
+oversized in the Dock, so do not feed the PNG to PyInstaller directly.
+
+The product name is **Narmada**. `APP_TITLE` (window title, About box, Info.plist
+`CFBundleName`) is the only user-visible name. `APP_NAME = "ReceiptScanner"`, the
+`.app` filename, the bundle identifier and the `receiptscanner/` package name are
+deliberately unchanged: `APP_NAME` is the on-disk config and data directory, and
+changing it would orphan existing users' files.
+
 ### Config layering
 
 `config.default.json` (shipped, bundled into the .app) is deep-merged under the
@@ -324,7 +338,10 @@ creased receipt is sometimes wrong, so never silently auto-save an entry.
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
 
 Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- **Always search with graphify first when `graphify-out/graph.json` exists.** Before grepping, globbing or reading source to answer a question about the codebase, run `graphify query "<question>"`. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output. Fall back to grep/Read only after graphify has oriented you, or to inspect or edit specific lines.
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+- **Keep the graph current after significant changes — don't forget this step.** A significant change is a new or renamed module, function or class, a changed architecture or data flow, or edited docs (`README.md`, `CLAUDE.md`). Do it before you report the work as finished.
+  - Code-only changes: run `graphify update .` (AST-only, no API cost).
+  - Any change to docs (`README.md`, `CLAUDE.md`): run `/graphify . --update` instead. `graphify update .` does not re-read docs, so the graph would keep describing the old behaviour.
+  - Check any node IDs a subagent proposes against `graphify-out/graph.json` before merging. They guess, and unresolved ones become dangling edges.

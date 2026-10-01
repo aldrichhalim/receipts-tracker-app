@@ -8,9 +8,15 @@ Build with:  pyinstaller --noconfirm ReceiptScanner.spec
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 BUNDLE_LANGUAGES = ("ind", "eng")  # Indonesian is the default; English is a fallback.
+
+ICON_SOURCE = Path(SPECPATH) / "assets" / "logo-app.png"
+# macOS draws an icon's artwork inside a transparent margin (Apple's template
+# fills 824 of 1024 px). Full-bleed art looks oversized next to every other Dock icon.
+ICON_ARTWORK_FRACTION = 824 / 1024
 
 
 def find_tesseract():
@@ -95,11 +101,37 @@ def find_tessdata(binary, languages):
     )
 
 
+def build_icns(source, destination):
+    """Turn the square master PNG into a macOS .icns with the standard margin.
+
+    Pillow writes every size from 16 px to 512@2x from the one master, so the
+    PNG stays the single source of truth and no generated binary is committed.
+    """
+    from PIL import Image
+
+    if not source.is_file():
+        raise SystemExit(f"App icon not found: {source}")
+
+    size = 1024
+    art = Image.open(source).convert("RGBA")
+    inset = round(size * ICON_ARTWORK_FRACTION)
+    art = art.resize((inset, inset), Image.LANCZOS)
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    canvas.paste(art, ((size - inset) // 2, (size - inset) // 2), art)
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(destination, format="ICNS")
+    return destination
+
+
 TESSERACT = find_tesseract()
 TESSDATA = find_tessdata(TESSERACT, BUNDLE_LANGUAGES)
 
 print(f"[spec] tesseract: {TESSERACT}")
 print(f"[spec] tessdata:  {TESSDATA} -> {', '.join(BUNDLE_LANGUAGES)}")
+
+ICON = build_icns(ICON_SOURCE, Path(tempfile.mkdtemp(prefix="icon-")) / "icon.icns")
+print(f"[spec] icon:      {ICON_SOURCE.name} -> {ICON.name}")
 
 # The binary goes in the root of the collected tree, alongside the dylibs
 # PyInstaller pulls in for it, so its rewritten load paths resolve.
@@ -157,15 +189,15 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="ReceiptScanner.app",
-    icon=None,
+    icon=str(ICON),
     bundle_identifier="local.receiptscanner.app",
     info_plist={
-        "CFBundleName": "Receipt Scanner",
-        "CFBundleDisplayName": "Receipt Scanner",
+        "CFBundleName": "Narmada",
+        "CFBundleDisplayName": "Narmada",
         "CFBundleShortVersionString": "1.1.0",
         "CFBundleVersion": "1.1.0",
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "12.0",
-        "NSHumanReadableCopyright": "Local receipt scanning with OpenCV and Tesseract.",
+        "NSHumanReadableCopyright": "Narmada: receipt tracker and expense report generator.",
     },
 )

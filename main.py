@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Entry point for the Receipt Scanner desktop app.
+"""Entry point for the Narmada desktop app.
 
 Normally launches the GUI. `--self-test [image ...]` instead runs the pipeline
 headlessly and prints what it found, which is how a frozen bundle gets checked:
@@ -21,7 +21,7 @@ def self_test(paths: list[str]) -> int:
     from receiptscanner.ocr import describe_engine, get_engine
     from receiptscanner.resources import is_frozen, resource_roots
 
-    print(f"Receipt Scanner {__version__}  (frozen={is_frozen()})")
+    print(f"Narmada {__version__}  (frozen={is_frozen()})")
     print("resource roots:")
     for root in resource_roots():
         print(f"  {root}")
