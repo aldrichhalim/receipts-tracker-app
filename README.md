@@ -63,6 +63,21 @@ path, and it accepts photos and `.mbox` files alike:
 .venv/bin/python main.py --self-test data/Unread.mbox    # every receipt in a mailbox
 ```
 
+The automated tests use pytest:
+
+```bash
+.venv/bin/python -m pytest -m "not ocr and not gui and not fixtures"   # ~2 s, runs anywhere
+.venv/bin/python -m pytest                                              # everything this machine can run
+```
+
+The `ocr`, `gui` and `fixtures` groups skip themselves when Tesseract, a
+display or `data/` is missing, so the plain `pytest` is green on a fresh clone.
+Every test runs against a throwaway home directory and config, so none of them
+can touch `~/Documents/ReceiptScanner`. To check a change to the extraction
+logic against your own receipts, run `python tests/make_golden.py` *before* the
+change and `pytest -m fixtures` after: it reports each receipt whose date,
+category, name, amount or currency changed.
+
 `data/` is not tracked in git — real receipts and mailbox exports carry names,
 card digits, tax IDs and addresses. Drop your own receipt photos or a `.mbox`
 export in there to run the checks above; `--self-test` with no arguments works
@@ -292,6 +307,7 @@ another machine).
 | `receiptscanner/db.py` | SQLite storage |
 | `receiptscanner/report.py` | CSV export and date-range presets |
 | `receiptscanner/app.py` | tkinter UI |
+| `tests/` | pytest suite (see [Running from source](#running-from-source)) |
 | `ReceiptScanner.spec` | PyInstaller build |
 
 ## License

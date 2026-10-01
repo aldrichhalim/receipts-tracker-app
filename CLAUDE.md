@@ -19,11 +19,20 @@ brew install tesseract tesseract-lang          # needed for source runs only
 # Run the GUI
 .venv/bin/python main.py
 
-# Verify the pipeline headlessly — this is the closest thing to a test suite
+# Smoke-test the whole pipeline headlessly (pytest covers the logic; this covers the real thing)
 .venv/bin/python main.py --self-test                     # engine/resource checks only
 .venv/bin/python main.py --self-test data/IMG_5672.jpeg  # single image
 .venv/bin/python main.py --self-test data/*.jpeg         # all four photo fixtures
 .venv/bin/python main.py --self-test data/Unread.mbox    # every receipt in a mailbox
+
+# Tests. The fast run needs no Tesseract, display or data/ and takes ~2 s
+.venv/bin/python -m pytest -m "not ocr and not gui and not fixtures"
+.venv/bin/python -m pytest                                  # everything this machine can run (~1 min)
+.venv/bin/python -m pytest tests/test_report.py -k csv      # one file, one test
+
+# Before changing extraction logic, snapshot the real receipts; afterwards diff them
+.venv/bin/python tests/make_golden.py                       # writes data/golden.json (gitignored)
+.venv/bin/python -m pytest -m fixtures
 
 # Build the .app (embeds OpenCV, the tesseract binary + dylibs, ind/eng models)
 .venv/bin/python -m PyInstaller --noconfirm --clean ReceiptScanner.spec
@@ -33,11 +42,43 @@ env -u TESSDATA_PREFIX PATH=/usr/bin:/bin \
   ./dist/ReceiptScanner.app/Contents/MacOS/ReceiptScanner --self-test data/IMG_5672.jpeg
 ```
 
-There is no pytest suite. `data/` holds fixtures: four real Indonesian receipt
+`data/` holds the private fixtures: four real Indonesian receipt
 photos and `Unread.mbox`, a Gmail export of five Grab e-receipts. `--self-test`
 runs the full pipeline over whatever you pass and fails if anything yields zero
-text. Point `RECEIPTSCANNER_CONFIG` at a scratch JSON file when testing so runs
-do not write into `~/Documents/ReceiptScanner`.
+text. Point `RECEIPTSCANNER_CONFIG` at a scratch JSON file when running `--self-test`
+by hand so it does not write into `~/Documents/ReceiptScanner`. The pytest suite
+does this itself.
+
+### Tests
+
+`tests/` has no dependency on `data/`, which is gitignored because it holds real
+names, card digits and tax IDs: unit tests use small synthetic OCR-like text and
+synthetic mailboxes (`tests/helpers.py`). Rules that are easy to break:
+
+- **Isolation is automatic and must stay so.** An autouse fixture in
+  `conftest.py` points `HOME` and `RECEIPTSCANNER_CONFIG` at `tmp_path`. An
+  earlier unisolated script wrote a row and several scans into the real
+  database. `test_isolation.py` proves it holds; never build a `Config` or
+  `ReceiptStore` against a real path in a test.
+- **Markers skip themselves:** `ocr` (needs Tesseract), `gui` (needs a display),
+  `fixtures` (needs `data/golden.json`). Do not add a marker without an
+  auto-skip in `conftest.py`.
+- **The `gui` probe runs in a subprocess.** A second `tkinter.Tk()` in the
+  pytest process segfaults on macOS, so the process must not create a throwaway
+  root just to check for a display.
+- **Characterise before you change, then red → green.** The suite pins the
+  tuned IDR behaviour so refactors cannot trade it away. When adding behaviour,
+  write the failing test first; if an existing test has to change, treat it as a
+  regression until proven otherwise. After writing tests, sanity-check them by
+  injecting a bug into the code under test: a suite that has never failed has
+  not proven it can.
+- **Known defects are strict `xfail`s, not frozen as correct:** the
+  unlabelled-override heuristic in `extract_amount` (a discounted item price can
+  replace the total) and CSV formula injection in `write_csv`. Fixing one turns
+  its test into an unexpected pass, which forces the marker off.
+- `data/golden.json` is a local regression net for the real receipts, not
+  a spec: an intended improvement legitimately changes it. Review each diff,
+  then regenerate.
 
 The GUI can also be driven headlessly for integration testing: construct
 `ReceiptScannerApp`, call `withdraw()`, stub `app.messagebox`/`app.filedialog`,

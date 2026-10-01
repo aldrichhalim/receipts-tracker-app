@@ -9,3 +9,6 @@ beautifulsoup4==4.15.0             # HTML e-receipt bodies; .mbox itself uses st
 # Build only
 pyinstaller==6.21.0
 pyinstaller-hooks-contrib==2026.6
+
+# Test only
+pytest==9.1.1
