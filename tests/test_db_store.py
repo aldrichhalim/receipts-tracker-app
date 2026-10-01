@@ -221,3 +221,26 @@ class TestRecentDeleteSummary:
         receipts.close()
         with pytest.raises(sqlite3.ProgrammingError):
             receipts.recent()
+
+
+class TestSummaryByCurrency:
+    def test_totals_are_grouped_by_currency(self, store):
+        store.save(make_record(name="a", amount=1000.0, currency="IDR"))
+        store.save(make_record(name="b", amount=2000.0, currency="IDR"))
+        store.save(make_record(name="c", amount=12.5, currency="USD"))
+
+        count, totals = store.summary()
+        assert count == 3
+        assert totals == pytest.approx({"IDR": 3000.0, "USD": 12.5})
+
+    def test_an_empty_store_has_no_totals(self, store):
+        assert store.summary() == (0, {})
+
+    def test_rows_with_no_currency_are_grouped_under_an_empty_key(self, store):
+        store.save(make_record(name="a", amount=5.0, currency=None))
+        assert store.summary()[1] == {"": 5.0}
+
+    def test_entries_between_exposes_the_currency(self, store):
+        store.save(make_record(name="a", amount=5.0, currency="USD"))
+        (row,) = store.entries_between("2026-01-01", "2026-12-31")
+        assert row["currency"] == "USD"

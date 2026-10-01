@@ -120,3 +120,8 @@ class TestKnownBugs:
     def test_a_discounted_item_price_does_not_replace_the_total(self):
         text = "Nasi Goreng 50.000\nDiskon 10.000\nTotal 45.000"
         assert amount(text) == Decimal("45000")
+
+    @pytest.mark.xfail(strict=True, reason=OVERRIDE)
+    def test_the_same_holds_for_dollars(self):
+        text = "Item $12.00\nDiscount $5.00\nTax $1.10\nTotal $8.10"
+        assert extract_amount(text, "USD") == Decimal("8.10")

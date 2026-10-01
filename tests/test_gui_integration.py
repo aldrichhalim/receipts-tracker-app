@@ -99,3 +99,62 @@ def test_import_process_review_and_save(app, store, tmp_path):
     assert len(saved) == 2
     assert sorted(r["amount"] for r in saved) == [44000.0, 64500.0]
     assert {r["source_kind"] for r in saved} == {"email_render"}
+
+
+USD_HTML = (
+    "<table>"
+    "<tr><td>Transaksi Kartu Kredit</td><td>BCA</td></tr>"
+    "<tr><td>Merchant</td><td>SURFSHARK</td></tr>"
+    "<tr><td>Sejumlah</td><td>USD 56,48</td></tr>"
+    "</table>"
+)
+
+
+def test_a_dollar_receipt_is_detected_shown_and_saved_as_usd(app, store, tmp_path):
+    box = build_mbox(
+        tmp_path / "usd.mbox",
+        [make_message(subject="Notifikasi", sender="BCA <b@bca.co.id>", html=USD_HTML)],
+    )
+    app.mailbox_path = box
+    app.add_mailbox()
+    process_everything(app)
+
+    (item,) = app.items
+    assert item.processed is not None, item.error
+    app._select_index(0)
+    app.update()
+
+    # The dropdown offers both currencies and shows what was detected.
+    assert list(app.entry_currency["values"]) == ["IDR", "USD"]
+    assert app.var_currency.get() == "USD"
+    assert app.var_amount.get() == "56.48"
+
+    app.save_current()
+    (row,) = store.recent()
+    assert (row["currency"], row["amount"]) == ("USD", 56.48)
+
+
+def test_the_currency_can_be_corrected_before_saving(app, store, tmp_path):
+    app.mailbox_path = mailbox(tmp_path, "44.000")
+    app.add_mailbox()
+    process_everything(app)
+    app._select_index(0)
+    app.update()
+    assert app.var_currency.get() == "IDR"
+
+    app.var_currency.set("USD")
+    app.save_current()
+    assert store.recent()[0]["currency"] == "USD"
+
+
+def test_the_choice_survives_navigating_away_and_back(app, tmp_path):
+    app.mailbox_path = mailbox(tmp_path, "44.000", "64.500")
+    app.add_mailbox()
+    process_everything(app)
+
+    app._select_index(0)
+    app.var_currency.set("USD")
+    app._select_index(1)
+    assert app.var_currency.get() == "IDR"
+    app._select_index(0)
+    assert app.var_currency.get() == "USD"

@@ -64,7 +64,7 @@ class PipelineOutput:
             "ocr_lang": self.ocr.lang,
             "ocr_confidence": self.ocr.mean_confidence,
             "ocr_word_count": self.ocr.word_count,
-            "currency": config.currency,
+            "currency": self.suggestion.currency or config.currency,
         }
 
         if self.scan is not None:
@@ -171,7 +171,12 @@ def process_image(
     if email is not None and email.date_iso:
         fallback_date = fallback_date or email.date_iso
 
-    suggestion = parse_receipt(ocr.text, config.categories, fallback_date=fallback_date)
+    suggestion = parse_receipt(
+        ocr.text,
+        config.categories,
+        fallback_date=fallback_date,
+        default_currency=config.currency,
+    )
     if email is not None and not suggestion.name:
         suggestion.name = email.merchant_guess()
 
@@ -236,7 +241,10 @@ def process_email(
 
     report("Reading fields")
     suggestion = parse_receipt(
-        ocr.text, config.categories, fallback_date=receipt.date_iso
+        ocr.text,
+        config.categories,
+        fallback_date=receipt.date_iso,
+        default_currency=config.currency,
     )
     # The message body names its merchant far more reliably than OCR of a render
     # or a header-line guess, so it still wins here.

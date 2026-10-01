@@ -196,3 +196,47 @@ class TestProcessEmailEndToEnd:
         assert (
             store.find_by_message_id(item.message_id)["source_kind"] == "email_render"
         )
+
+
+class TestCurrencyInRecord:
+    def test_the_detected_currency_is_recorded(self, config):
+        assert output(currency="USD").as_record(config)["currency"] == "USD"
+
+    def test_an_undecided_receipt_takes_the_configured_default(self, config):
+        assert output(currency="").as_record(config)["currency"] == config.currency
+
+    def test_a_rupiah_receipt_stays_rupiah(self, config):
+        assert output(currency="IDR").as_record(config)["currency"] == "IDR"
+
+    def test_the_default_can_be_changed_in_config(self, config):
+        config._data["currency"] = "USD"
+        assert output(currency="").as_record(config)["currency"] == "USD"
+
+
+@pytest.mark.ocr
+class TestUsdEmailEndToEnd:
+    """A BCA-style dollar notification through render -> Tesseract -> parse."""
+
+    HTML = (
+        "<table>"
+        "<tr><td>Transaksi Kartu Kredit</td><td>BCA</td></tr>"
+        "<tr><td>Merchant</td><td>SURFSHARK</td></tr>"
+        "<tr><td>Sejumlah</td><td>USD 56,48</td></tr>"
+        "</table>"
+    )
+
+    def test_the_amount_and_currency_survive_the_round_trip(self, tmp_path, config):
+        box = build_mbox(
+            tmp_path / "in.mbox",
+            [
+                make_message(
+                    subject="Notifikasi", sender="BCA <b@bca.co.id>", html=self.HTML
+                )
+            ],
+        )
+        (item,) = iter_mbox(box, tmp_path / "att")
+        out = pipeline.process_email(item, config)
+
+        assert out.suggestion.currency == "USD"
+        assert out.suggestion.amount == "56.48"
+        assert out.as_record(config)["currency"] == "USD"

@@ -234,8 +234,20 @@ class ReceiptStore:
             ).fetchall()
         )
 
-    def summary(self) -> tuple[int, float]:
-        row = self._connection.execute(
-            "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total FROM receipts"
-        ).fetchone()
-        return int(row["n"]), float(row["total"])
+    def summary(self) -> tuple[int, dict[str, float]]:
+        """Row count, and the total per currency (rupiah and dollars never mix).
+
+        Rows that never stored a currency are grouped under the empty string.
+        """
+        count = int(
+            self._connection.execute("SELECT COUNT(*) FROM receipts").fetchone()[0]
+        )
+        totals = {
+            row["currency"]: float(row["total"])
+            for row in self._connection.execute(
+                "SELECT COALESCE(currency, '') AS currency, "
+                "       COALESCE(SUM(amount), 0) AS total "
+                "FROM receipts GROUP BY COALESCE(currency, '') ORDER BY 1"
+            )
+        }
+        return count, totals

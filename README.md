@@ -22,6 +22,9 @@ HTML are never fetched.
   normal pipeline.
 - **A mandatory human review step** before anything is saved — every OCR
   suggestion is editable, never auto-committed.
+- **Rupiah and US dollar receipts.** The currency is read off the receipt (`Rp`,
+  `IDR`, `$`, `USD`), shown in a dropdown you can correct before saving, and
+  decides how dates and amounts are read.
 - **CSV reporting** over a date range, with quick presets and a live
   entry-count/total preview before export.
 - **A standalone macOS `.app`** with OpenCV, Tesseract, and the language
@@ -108,9 +111,10 @@ before you commit to a file, with quick presets for this month, last month, this
 year, and everything on record.
 
 ```csv
-Date,Category,Expense Detail,Amount (IDR)
-2026-06-16,Makanan & Minuman,Caffeine Suite,70000.00
-2026-07-14,Transportasi,Grab,44000.00
+Date,Category,Expense Detail,Amount,Currency
+2026-06-16,Makanan & Minuman,Caffeine Suite,70000.00,IDR
+2026-07-14,Transportasi,Grab,44000.00,IDR
+2026-08-17,Tagihan & Utilitas,SURFSHARK,56.48,USD
 ```
 
 Both ends of the range are inclusive, and the dates may be typed in any format
@@ -120,9 +124,11 @@ the expense, not where it came from. Entries saved without a date are left out,
 since they cannot fall inside a range.
 
 The file is written UTF-8 with a BOM so Excel renders Indonesian text correctly,
-and amounts are unformatted so a spreadsheet can sum the column directly. No
-total row is appended, which would otherwise get in the way of sorting and
-filtering — the total is shown in the app when the report is saved.
+and amounts are unformatted so a spreadsheet can sum the column directly. Each
+row carries its own currency, and the totals shown in the app are kept per
+currency (`IDR 69,000 · USD 76.48`), because adding rupiah to dollars means
+nothing. No total row is appended, which would otherwise get in the way of
+sorting and filtering.
 
 ## Mailbox import
 
@@ -181,12 +187,14 @@ Running from source it sits next to the code; in the built app it lives at
   "database_path": "~/Documents/ReceiptScanner/receipts.db",
   "copy_originals": false,
   "currency": "IDR",
+  "currencies": ["IDR", "USD"],
   "categories": ["Makanan & Minuman", "Transportasi", "..."],
   "ocr": { "lang": "ind", "psm": 6, "oem": 3 }
 }
 ```
 
-`categories` fills the category dropdown. `ocr.lang` accepts anything installed
+`currency` is the default for a receipt that prints none; `currencies` fills the
+review form's currency dropdown. `categories` fills the category dropdown. `ocr.lang` accepts anything installed
 (`ind`, `eng`, or `ind+eng`). `preprocess` exposes every pipeline knob; the
 defaults were tuned against real receipt photos and are a reasonable starting
 point.
@@ -234,6 +242,14 @@ and the usual POS vocabulary. The total is picked by keyword tier
 keyword deciding the tier so `SUBTOTAL` is never mistaken for the grand total.
 Long unformatted digit runs are ignored, which keeps card and merchant numbers
 out of the amount field.
+
+**Currency** is detected first, by counting `Rp`/`IDR` against `$`/`US$`/`USD`
+(a tie falls back to the configured default), and it changes two rules. A
+rupiah total is never under 100, so smaller numbers are treated as quantities.
+A dollar total can be `0.99`, so instead it must carry cents or sit on a line
+that names the currency. Numeric dates are day-first for rupiah and month-first
+for dollars (`03/04/2026` is 3 April or March 4), while written months such as
+`Aug 17, 2026` parse either way.
 
 Every value is only a suggestion — the review step exists because OCR on a
 creased receipt will sometimes be wrong.

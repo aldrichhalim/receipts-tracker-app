@@ -52,14 +52,27 @@ DATE_FORMATS = (
     "%d/%m/%y",
     "%d-%m-%y",
 )
+# A dollar receipt is month-first; the day-first formats stay as the fallback
+# for a date that cannot be a month ("25/12/2026").
+MONTH_FIRST_FORMATS = ("%m/%d/%Y", "%m-%d-%Y", "%m/%d/%y")
+# Written-out months are unambiguous, so they apply to every currency.
+NAMED_MONTH_FORMATS = ("%b %d, %Y", "%B %d, %Y", "%b %d %Y", "%B %d %Y")
 
 
-def parse_date_input(raw: str) -> str | None:
-    """Accept the common written orders and return ISO, or None if unreadable."""
+def parse_date_input(raw: str, currency: str = "") -> str | None:
+    """Accept the common written orders and return ISO, or None if unreadable.
+
+    Numeric dates are day-first unless `currency` is USD, which reads them
+    month-first.
+    """
     raw = (raw or "").strip()
     if not raw:
         return None
-    for fmt in DATE_FORMATS:
+    if currency == "USD":
+        formats = (DATE_FORMATS[0], *MONTH_FIRST_FORMATS, *DATE_FORMATS[1:])
+    else:
+        formats = DATE_FORMATS
+    for fmt in (*formats, *NAMED_MONTH_FORMATS):
         try:
             return datetime.strptime(raw, fmt).date().isoformat()
         except ValueError:
@@ -70,6 +83,13 @@ def parse_date_input(raw: str) -> str | None:
 def _format_money(amount: float, currency: str = "") -> str:
     text = f"{amount:,.0f}" if float(amount).is_integer() else f"{amount:,.2f}"
     return f"{currency} {text}".strip()
+
+
+def _format_totals(totals: dict[str, float]) -> str:
+    """ "IDR 69,000 · USD 76.48": one figure per currency, never a mixed sum."""
+    return " · ".join(
+        _format_money(amount, currency) for currency, amount in sorted(totals.items())
+    )
 
 
 def _shrink(image: Image.Image, max_side: int = PREVIEW_MAX_SIDE) -> Image.Image:
@@ -274,7 +294,7 @@ class ReportDialog(tk.Toplevel):
 
         start, end = span
         self.rows = self.store.entries_between(start, end)
-        summary = report.summarize(self.rows, start, end)
+        summary = report.summarize(self.rows, start, end, self.config_data.currency)
         if summary.count == 0:
             self.preview_label.config(
                 text=f"No entries between {start} and {end}.", foreground="#b45309"
@@ -282,7 +302,7 @@ class ReportDialog(tk.Toplevel):
             self.export_button.state(["disabled"])
             return
 
-        total = _format_money(summary.total, self.config_data.currency)
+        total = _format_totals(summary.totals)
         self.preview_label.config(
             text=f"{summary.count} entr{'y' if summary.count == 1 else 'ies'} · {total}",
             foreground="#15803d",
@@ -321,8 +341,8 @@ class ReportDialog(tk.Toplevel):
             self.grab_set()
             return
 
-        summary = report.summarize(self.rows, start, end)
-        total = _format_money(summary.total, self.config_data.currency)
+        summary = report.summarize(self.rows, start, end, self.config_data.currency)
+        total = _format_totals(summary.totals)
         parent = self._parent
         self.destroy()
         parent.report_written(Path(target), written, total, start, end)
@@ -610,6 +630,7 @@ class ReceiptScannerApp(tk.Tk):
         self.var_category = tk.StringVar()
         self.var_name = tk.StringVar()
         self.var_amount = tk.StringVar()
+        self.var_currency = tk.StringVar(value=self.config_data.currency)
 
         grid = ttk.Frame(box)
         grid.pack(fill=tk.BOTH, expand=True)
@@ -646,9 +667,14 @@ class ReceiptScannerApp(tk.Tk):
         ttk.Label(grid, text="Amount").grid(row=3, column=0, sticky=tk.W, pady=4)
         amount_row = ttk.Frame(grid)
         amount_row.grid(row=3, column=1, sticky="ew", pady=4)
-        ttk.Label(
-            amount_row, text=self.config_data.currency, foreground="#6b7280"
-        ).pack(side=tk.LEFT, padx=(0, 6))
+        self.entry_currency = ttk.Combobox(
+            amount_row,
+            textvariable=self.var_currency,
+            values=self.config_data.currencies,
+            state="readonly",
+            width=5,
+        )
+        self.entry_currency.pack(side=tk.LEFT, padx=(0, 6))
         self.entry_amount = ttk.Entry(
             amount_row, textvariable=self.var_amount, width=20
         )
@@ -873,7 +899,7 @@ class ReceiptScannerApp(tk.Tk):
             parts.append(f"{pending} to review")
         if failed:
             parts.append(f"{failed} failed")
-        rows, amount = self.store.summary()
+        rows, _totals = self.store.summary()
         parts.append(f"database: {rows} entries")
         self.counts_label.config(text="  ·  ".join(parts))
 
@@ -1080,6 +1106,9 @@ class ReceiptScannerApp(tk.Tk):
             "category": suggestion.category,
             "name": suggestion.name,
             "amount": suggestion.amount,
+            "currency": processed.record.get("currency")
+            or suggestion.currency
+            or self.config_data.currency,
             "notes": "",
             "ocr_text": processed.ocr_text,
         }
@@ -1120,6 +1149,7 @@ class ReceiptScannerApp(tk.Tk):
             "category": self.var_category.get(),
             "name": self.var_name.get(),
             "amount": self.var_amount.get(),
+            "currency": self.var_currency.get(),
             "notes": self.entry_notes.get("1.0", tk.END).strip(),
             "ocr_text": self.ocr_text.get("1.0", tk.END).strip(),
         }
@@ -1156,6 +1186,11 @@ class ReceiptScannerApp(tk.Tk):
             self.var_category.set(form.get("category", ""))
             self.var_name.set(form.get("name", ""))
             self.var_amount.set(form.get("amount", ""))
+            self.var_currency.set(
+                form.get("currency")
+                or processed.record.get("currency")
+                or self.config_data.currency
+            )
 
             self.entry_notes.delete("1.0", tk.END)
             self.entry_notes.insert("1.0", form.get("notes", ""))
@@ -1188,6 +1223,7 @@ class ReceiptScannerApp(tk.Tk):
         self.entry_notes.delete("1.0", tk.END)
         for var in (self.var_date, self.var_category, self.var_name, self.var_amount):
             var.set("")
+        self.var_currency.set(self.config_data.currency)
 
     def _reset_to_suggestion(self) -> None:
         if self.current_index is None:
@@ -1223,7 +1259,7 @@ class ReceiptScannerApp(tk.Tk):
         elif field_name == "date":
             from .parsing import extract_date
 
-            parsed = extract_date(selection)
+            parsed = extract_date(selection, self.var_currency.get())
             if not parsed:
                 self._set_status(f"Could not read a date from “{selection}”.")
                 return
@@ -1248,6 +1284,7 @@ class ReceiptScannerApp(tk.Tk):
     # Saving
     # ------------------------------------------------------------------
     def _validated_entry(self) -> dict[str, Any] | None:
+        currency = self.var_currency.get().strip().upper() or self.config_data.currency
         raw_date = self.var_date.get().strip()
         if not raw_date:
             messagebox.showwarning(
@@ -1256,7 +1293,7 @@ class ReceiptScannerApp(tk.Tk):
             self.entry_date.focus_set()
             return None
 
-        entry_date = parse_date_input(raw_date)
+        entry_date = parse_date_input(raw_date, currency)
         if entry_date is None:
             messagebox.showwarning(
                 "Invalid date",
@@ -1290,6 +1327,7 @@ class ReceiptScannerApp(tk.Tk):
             "category": self.var_category.get().strip() or "Lainnya",
             "name": name,
             "amount": float(amount),
+            "currency": currency,
             "notes": self.entry_notes.get("1.0", tk.END).strip() or None,
             "ocr_text": self.ocr_text.get("1.0", tk.END).strip(),
         }
@@ -1330,7 +1368,8 @@ class ReceiptScannerApp(tk.Tk):
         }
         self._update_row(index)
         self._set_status(
-            f"Saved “{entry['name'] or item.name}” — {self.config_data.currency} {entry['amount']:,.2f} (id {item.db_id})."
+            f"Saved “{entry['name'] or item.name}” — {entry['currency']} "
+            f"{entry['amount']:,.2f} (id {item.db_id})."
         )
 
         following = self._next_needing_review(index)

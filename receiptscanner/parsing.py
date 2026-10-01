@@ -74,6 +74,12 @@ TOTAL_KEYWORDS: list[tuple[int, tuple[str, ...]]] = [
             "amount due",
             "total paid",
             "total harga",
+            "order total",
+            "total charged",
+            "amount charged",
+            "amount paid",
+            "balance due",
+            "total due",
         ),
     ),
     (2, ("total", "jumlah", "netto", "net sales", "net total")),
@@ -90,6 +96,7 @@ TOTAL_KEYWORDS: list[tuple[int, tuple[str, ...]]] = [
             "kartu kredit",
             "credit card",
             "rp",
+            "usd",
         ),
     ),
 ]
@@ -332,6 +339,18 @@ NAME_NOISE = (
 
 _MONEY_TOKEN = re.compile(r"\d[\d.,]*\d|\d")
 
+# A dollar is "$" directly before a digit, "US$", or the word USD. The look-
+# arounds keep "S$ 5" (Singapore), "BUSD" and "USDA" from counting.
+_USD_MARKER = re.compile(
+    r"(?<![A-Za-z])US\$|(?<![A-Za-z])USD(?![A-Za-z])|(?<![A-Za-z$])\$(?=\s?\d)",
+    re.IGNORECASE,
+)
+_IDR_MARKER = re.compile(r"(?<![A-Za-z])(?:Rp|IDR|rupiah)(?![A-Za-z])", re.IGNORECASE)
+_HAS_CENTS = re.compile(r"[.,]\d{1,2}$")
+
+# IDR totals are in the thousands; anything below this is a quantity or count.
+IDR_FLOOR = Decimal(100)
+
 
 @dataclass
 class ParsedReceipt:
@@ -339,6 +358,8 @@ class ParsedReceipt:
     category: str = ""
     name: str = ""
     amount: str = ""
+    # "" when nothing was printed to decide it and no default was supplied.
+    currency: str = ""
 
     def as_dict(self) -> dict[str, str]:
         return {
@@ -353,6 +374,23 @@ def _normalize(text: str) -> str:
     text = unicodedata.normalize("NFKC", text)
     # OCR routinely renders Rp as R p / RP. and confuses O/0 in headers.
     return text.replace(" ", " ")
+
+
+def detect_currency(text: str, default: str = "") -> str:
+    """Which currency a receipt is printed in: "USD", "IDR", or `default`.
+
+    Counts the markers of each and takes the more frequent, so a rupiah receipt
+    that mentions one dollar fare is still rupiah. A tie, or no marker at all,
+    is undecided and returns `default` rather than guessing.
+    """
+    text = _normalize(text or "")
+    dollars = len(_USD_MARKER.findall(text))
+    rupiah = len(_IDR_MARKER.findall(text))
+    if dollars > rupiah:
+        return "USD"
+    if rupiah > dollars:
+        return "IDR"
+    return default
 
 
 def parse_number(raw: str) -> Decimal | None:
@@ -380,15 +418,18 @@ def parse_number(raw: str) -> Decimal | None:
         return None
 
 
-def _money_candidates(line: str, money_shaped_only: bool = False) -> list[Decimal]:
-    """Numbers on a line. `money_shaped_only` drops bare digit runs.
+def _money_tokens(
+    line: str, money_shaped_only: bool = False
+) -> list[tuple[str, Decimal]]:
+    """(printed token, value) for each number on a line.
 
-    Receipts are full of long unformatted numbers — card numbers, merchant and
-    approval codes, phone numbers — that dwarf any real total. Printed amounts
-    almost always carry a group separator, so requiring one (or a short run of
-    digits) keeps identifiers out of the running.
+    `money_shaped_only` drops bare digit runs. Receipts are full of long
+    unformatted numbers - card numbers, merchant and approval codes, phone
+    numbers - that dwarf any real total. Printed amounts almost always carry a
+    group separator, so requiring one (or a short run of digits) keeps
+    identifiers out of the running.
     """
-    values = []
+    found = []
     for match in _MONEY_TOKEN.finditer(line):
         token = match.group(0)
         value = parse_number(token)
@@ -401,8 +442,28 @@ def _money_candidates(line: str, money_shaped_only: bool = False) -> list[Decima
                 continue
             if digits > 12:
                 continue
-        values.append(value)
-    return values
+        found.append((token, value))
+    return found
+
+
+def _money_candidates(line: str, money_shaped_only: bool = False) -> list[Decimal]:
+    """Numbers on a line. See `_money_tokens` for what money-shaped means."""
+    return [value for _, value in _money_tokens(line, money_shaped_only)]
+
+
+def _line_amounts(line: str, currency: str) -> list[Decimal]:
+    """The values on a line that could plausibly be a money amount.
+
+    IDR drops anything under the floor: a rupiah total is never that small, so
+    small numbers are quantities. A dollar total can be 0.99, so that floor
+    would erase it; instead a dollar value must carry cents or sit on a line
+    that names the currency, which still rejects a bare "Total 3".
+    """
+    tokens = _money_tokens(line, money_shaped_only=True)
+    if currency != "USD":
+        return [value for _, value in tokens if value >= IDR_FLOOR]
+    named = bool(_USD_MARKER.search(line))
+    return [value for token, value in tokens if named or _HAS_CENTS.search(token)]
 
 
 def format_amount(value: Decimal | float | None) -> str:
@@ -414,7 +475,8 @@ def format_amount(value: Decimal | float | None) -> str:
     return f"{decimal_value:.2f}"
 
 
-def extract_amount(text: str) -> Decimal | None:
+def extract_amount(text: str, currency: str = "") -> Decimal | None:
+    currency = currency or detect_currency(text) or "IDR"
     best_tier = 0
     best_value: Decimal | None = None
     unlabelled: list[Decimal] = []
@@ -434,9 +496,7 @@ def extract_amount(text: str) -> Decimal | None:
                 if keyword in lowered and len(keyword) > len(matched):
                     tier, matched = level, keyword
 
-        values = [
-            v for v in _money_candidates(line, money_shaped_only=True) if v >= 100
-        ]
+        values = _line_amounts(line, currency)
         if not values:
             continue
         candidate = max(values)
@@ -476,8 +536,9 @@ def _valid_date(year: int, month: int, day: int) -> str | None:
         return None
 
 
-def extract_date(text: str) -> str | None:
+def extract_date(text: str, currency: str = "") -> str | None:
     text = _normalize(text)
+    currency = currency or detect_currency(text) or "IDR"
 
     # ISO first, it is unambiguous.
     for match in re.finditer(r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b", text):
@@ -496,16 +557,29 @@ def extract_date(text: str) -> str | None:
         if parsed:
             return parsed
 
-    # Numeric day-first, the Indonesian convention.
+    # "Aug 17, 2026" / "July 14th 2026": unambiguous, so no currency needed.
+    month_first = (
+        rf"\b({month_names})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?\s*,?\s*(\d{{4}})\b"
+    )
+    for match in re.finditer(month_first, text, re.IGNORECASE):
+        month = MONTHS[match.group(1).lower()]
+        parsed = _valid_date(int(match.group(3)), month, int(match.group(2)))
+        if parsed:
+            return parsed
+
+    # Numeric. Day-first is the Indonesian convention; a dollar receipt is
+    # month-first. Whichever order is impossible for a given date (a month of
+    # 25) falls back to the other rather than dropping the date entirely.
     for match in re.finditer(r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b", text):
-        day, month, year = (int(g) for g in match.groups())
-        parsed = _valid_date(year, month, day)
-        if parsed:
-            return parsed
-        # Tolerate a US-ordered receipt rather than dropping the date entirely.
-        parsed = _valid_date(year, day, month)
-        if parsed:
-            return parsed
+        first, second, year = (int(g) for g in match.groups())
+        if currency == "USD":
+            orders = ((first, second), (second, first))  # (month, day)
+        else:
+            orders = ((second, first), (first, second))
+        for month, day in orders:
+            parsed = _valid_date(year, month, day)
+            if parsed:
+                return parsed
     return None
 
 
@@ -570,17 +644,24 @@ def guess_category(text: str, allowed: list[str]) -> str:
 
 
 def parse_receipt(
-    text: str, categories: list[str], fallback_date: str = ""
+    text: str,
+    categories: list[str],
+    fallback_date: str = "",
+    default_currency: str = "",
 ) -> ParsedReceipt:
     if not text or not text.strip():
         return ParsedReceipt(
             entry_date=fallback_date, category=guess_category("", categories)
         )
 
-    amount = extract_amount(text)
+    # What the receipt prints beats the configured default, which only fills in
+    # when nothing was printed to decide it.
+    currency = detect_currency(text, default_currency)
+    amount = extract_amount(text, currency)
     return ParsedReceipt(
-        entry_date=extract_date(text) or fallback_date,
+        entry_date=extract_date(text, currency) or fallback_date,
         category=guess_category(text, categories),
         name=extract_name(text) or "",
         amount=format_amount(amount),
+        currency=currency,
     )

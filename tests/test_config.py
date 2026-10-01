@@ -1,5 +1,6 @@
 """Config: layering, and the duplicated defaults that must never drift."""
 
+import copy
 import json
 from pathlib import Path
 
@@ -31,3 +32,33 @@ def test_first_run_writes_a_full_snapshot_of_the_defaults(tmp_path, monkeypatch)
     monkeypatch.setenv("RECEIPTSCANNER_CONFIG", str(path))
     Config.load()
     assert json.loads(path.read_text()) == BUILTIN_DEFAULTS
+
+
+class TestCurrencies:
+    def make(self, **overrides):
+        data = copy.deepcopy(BUILTIN_DEFAULTS)
+        data.update(overrides)
+        return Config(data, Path("config.json"))
+
+    def test_both_currencies_are_offered_by_default(self):
+        assert self.make().currencies == ["IDR", "USD"]
+
+    def test_the_default_currency_is_still_idr(self):
+        assert self.make().currency == "IDR"
+
+    def test_a_user_can_extend_the_list(self):
+        assert self.make(currencies=["IDR", "USD", "SGD"]).currencies == [
+            "IDR",
+            "USD",
+            "SGD",
+        ]
+
+    def test_the_default_currency_is_always_selectable(self):
+        # A configured default missing from the list would leave the dropdown
+        # unable to show the value the app itself assigned.
+        config = self.make(currency="SGD", currencies=["IDR", "USD"])
+        assert "SGD" in config.currencies
+
+    def test_a_broken_value_falls_back_to_the_builtin_list(self):
+        assert self.make(currencies="IDR").currencies == ["IDR", "USD"]
+        assert self.make(currencies=[]).currencies == ["IDR", "USD"]

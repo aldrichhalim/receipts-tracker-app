@@ -211,3 +211,78 @@ def test_range_query_summary_and_csv_agree(store, tmp_path):
     assert summary.count == written == len(exported) == 2
     assert summary.total == pytest.approx(5000.0)
     assert sum(float(r["Amount"]) for r in exported) == pytest.approx(summary.total)
+
+
+class TestPerCurrency:
+    """Summing rupiah and dollars is meaningless, so totals are kept apart."""
+
+    ROWS = [
+        entry(amount=44000.0, currency="IDR"),
+        entry(amount=25000.0, currency="IDR"),
+        entry(amount=56.48, currency="USD"),
+        entry(amount=20.0, currency="USD"),
+    ]
+
+    def test_totals_are_split_by_currency(self):
+        summary = report.summarize(self.ROWS, "a", "b")
+        assert summary.count == 4
+        assert summary.totals == pytest.approx({"IDR": 69000.0, "USD": 76.48})
+
+    def test_a_single_currency_has_a_single_total(self):
+        summary = report.summarize(self.ROWS[:2], "a", "b")
+        assert summary.totals == {"IDR": 69000.0}
+
+    def test_rows_with_no_currency_count_towards_the_default(self):
+        legacy = [
+            entry(amount=1000.0, currency=None),
+            entry(amount=2000.0, currency=""),
+        ]
+        summary = report.summarize(legacy, "a", "b", default_currency="IDR")
+        assert summary.totals == {"IDR": 3000.0}
+
+    def test_rows_that_lack_the_key_entirely_are_tolerated(self):
+        row = {"entry_date": "2026-07-14", "category": "x", "name": "n", "amount": 5.0}
+        assert report.summarize([row], "a", "b", default_currency="IDR").totals == {
+            "IDR": 5.0
+        }
+
+    def test_unreadable_amounts_add_to_no_currency(self):
+        summary = report.summarize([entry(amount="abc", currency="USD")], "a", "b")
+        assert summary.totals.get("USD", 0.0) == 0.0
+
+    def test_empty_input_has_no_totals(self):
+        assert report.summarize([], "a", "b").totals == {}
+
+    def test_the_csv_has_a_currency_column_after_the_amount(self, tmp_path):
+        path = tmp_path / "out.csv"
+        report.write_csv(self.ROWS, path)
+        with open(path, encoding="utf-8-sig", newline="") as handle:
+            header = next(csv.reader(handle))
+        assert header[:5] == [
+            "Date",
+            "Category",
+            "Expense Detail",
+            "Amount",
+            "Currency",
+        ]
+
+    def test_each_row_carries_its_own_currency(self, tmp_path):
+        path = tmp_path / "out.csv"
+        report.write_csv(self.ROWS, path)
+        rows = read_csv(path)
+        assert [(r["Amount"], r["Currency"]) for r in rows] == [
+            ("44000.00", "IDR"),
+            ("25000.00", "IDR"),
+            ("56.48", "USD"),
+            ("20.00", "USD"),
+        ]
+
+    def test_a_legacy_row_without_a_currency_gets_the_default(self, tmp_path):
+        path = tmp_path / "out.csv"
+        report.write_csv([entry(currency=None)], path, default_currency="IDR")
+        assert read_csv(path)[0]["Currency"] == "IDR"
+
+    def test_the_amount_header_no_longer_claims_one_currency(self, tmp_path):
+        path = tmp_path / "out.csv"
+        report.write_csv(self.ROWS, path)
+        assert "Amount" in read_csv(path)[0]

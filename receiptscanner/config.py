@@ -26,6 +26,7 @@ BUILTIN_DEFAULTS: dict[str, Any] = {
     "database_path": "~/Documents/ReceiptScanner/receipts.db",
     "scan_filename_template": "{stem}_{hash8}.png",
     "currency": "IDR",
+    "currencies": ["IDR", "USD"],
     "categories": [
         "Makanan & Minuman",
         "Belanja Harian",
@@ -187,6 +188,21 @@ class Config:
     @property
     def currency(self) -> str:
         return str(self.get("currency", default="IDR"))
+
+    @property
+    def currencies(self) -> list[str]:
+        """Currencies the review form offers. Always includes the default."""
+        raw = self.get("currencies", default=None)
+        codes = (
+            [str(code).strip().upper() for code in raw if str(code).strip()]
+            if isinstance(raw, list)
+            else []
+        )
+        if not codes:
+            codes = list(BUILTIN_DEFAULTS["currencies"])
+        if self.currency not in codes:
+            codes.append(self.currency)
+        return codes
 
     @property
     def categories(self) -> list[str]:

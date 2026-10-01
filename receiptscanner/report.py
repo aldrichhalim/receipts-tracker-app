@@ -7,37 +7,56 @@ so the column layout lives in one place.
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-COLUMNS = ("Date", "Category", "Expense Detail", "Amount")
+COLUMNS = ("Date", "Category", "Expense Detail", "Amount", "Currency")
 
 
 @dataclass(frozen=True)
 class ReportSummary:
     count: int
+    # Sum across every currency. Only meaningful when `totals` has one entry;
+    # rupiah and dollars cannot be added, so show `totals` instead.
     total: float
     start: str
     end: str
+    totals: dict[str, float] = field(default_factory=dict)
 
 
-def summarize(rows: Sequence[Mapping], start: str, end: str) -> ReportSummary:
+def _currency_of(row: Mapping, default: str) -> str:
+    """A row's currency, or `default` for legacy rows that never stored one."""
+    try:
+        return (row["currency"] or default) or ""
+    except (KeyError, IndexError):
+        return default
+
+
+def summarize(
+    rows: Sequence[Mapping], start: str, end: str, default_currency: str = ""
+) -> ReportSummary:
     total = 0.0
+    totals: dict[str, float] = {}
     for row in rows:
         try:
-            total += float(row["amount"] or 0)
+            amount = float(row["amount"] or 0)
         except (TypeError, ValueError):
             continue
-    return ReportSummary(count=len(rows), total=total, start=start, end=end)
+        total += amount
+        currency = _currency_of(row, default_currency)
+        totals[currency] = totals.get(currency, 0.0) + amount
+    return ReportSummary(
+        count=len(rows), total=total, start=start, end=end, totals=totals
+    )
 
 
 def default_filename(start: str, end: str) -> str:
     return f"receipts_{start}_to_{end}.csv"
 
 
-def write_csv(rows: Iterable[Mapping], path: Path, currency: str = "") -> int:
+def write_csv(rows: Iterable[Mapping], path: Path, default_currency: str = "") -> int:
     """Write the report and return the number of data rows written.
 
     Encoded utf-8-sig so Excel picks up the BOM and renders Indonesian text
@@ -47,8 +66,6 @@ def write_csv(rows: Iterable[Mapping], path: Path, currency: str = "") -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     header = list(COLUMNS)
-    if currency:
-        header[-1] = f"Amount ({currency})"
 
     written = 0
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
@@ -65,6 +82,7 @@ def write_csv(rows: Iterable[Mapping], path: Path, currency: str = "") -> int:
                     row["category"] or "",
                     row["name"] or "",
                     amount,
+                    _currency_of(row, default_currency),
                 ]
             )
             written += 1

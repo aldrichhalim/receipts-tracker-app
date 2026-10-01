@@ -5,6 +5,7 @@
   "database_path": "~/Documents/ReceiptScanner/receipts.db",
   "scan_filename_template": "{stem}_{hash8}.png",
   "currency": "IDR",
+  "currencies": ["IDR", "USD"],
   "categories": [
     "Makanan & Minuman",
     "Belanja Harian",

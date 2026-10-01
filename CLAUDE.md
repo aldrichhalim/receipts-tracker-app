@@ -136,6 +136,26 @@ export can be tested headlessly; `ReportDialog` in `app.py` is only the window
 around it. The CSV deliberately carries no total row — it would break sorting
 and filtering — so the total is surfaced in the app instead.
 
+### Currency (`parsing.py`)
+
+`detect_currency` counts `Rp`/`IDR`/`rupiah` against `$`/`US$`/`USD` (with
+look-arounds so `S$`, `BUSD`, `USDA` do not count); a tie returns the caller's
+default (`config.currency`). It is detected **first** and changes two rules:
+
+- **Amount floor.** IDR drops values under 100 (they are quantities). USD cannot
+  (`$0.99` is a total), so a USD value must carry cents *or* sit on a line that
+  names the currency, which still rejects a bare `Total 3`.
+- **Numeric date order.** Day-first for IDR, month-first for USD, each falling
+  back to the other when impossible (`25/12/2026`). Month-name dates
+  (`Aug 17, 2026`) are unambiguous and parse for both.
+
+`parse_number` needed no change: its "1-2 digits after the last separator is a
+decimal" rule already reads `10.50`, `1,234.56` and BCA's `USD 56,48`.
+`ParsedReceipt.currency` is `""` for empty text, and `as_record` falls back to
+`config.currency`. Reports total **per currency** (`ReportSummary.totals`);
+`.total` is the cross-currency sum and is only meaningful for a single one. The
+CSV has a `Currency` column.
+
 ### Mailbox ingest (`mail.py`)
 
 `.mbox` needs no third-party library — stdlib `mailbox` + `email` handle it.

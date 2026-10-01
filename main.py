@@ -65,7 +65,8 @@ def self_test(paths: list[str]) -> int:
             print(f"  [email] {output.ocr.word_count} words, OCR skipped (no image)")
         print(
             f"  date={suggestion.entry_date!r} category={suggestion.category!r} "
-            f"name={suggestion.name!r} amount={suggestion.amount!r}"
+            f"name={suggestion.name!r} amount={suggestion.amount!r} "
+            f"currency={suggestion.currency!r}"
         )
         if output.ocr.word_count == 0:
             print(f"  FAIL: no text recovered from {label}")
