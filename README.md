@@ -91,9 +91,9 @@ everything on record.
 
 ```csv
 Date,Category,Expense Detail,Amount,Currency
-2026-06-16,Makanan & Minuman,Caffeine Suite,70000.00,IDR
-2026-07-14,Transportasi,Grab,44000.00,IDR
-2026-08-17,Tagihan & Utilitas,SURFSHARK,56.48,USD
+2026-06-16,Makanan & Minuman,Warung Contoh,70000.00,IDR
+2026-07-14,Transportasi,Ride Example,44000.00,IDR
+2026-08-17,Tagihan & Utilitas,Example VPN,56.48,USD
 ```
 
 - Both ends of the range are inclusive. Dates may be typed in any format the

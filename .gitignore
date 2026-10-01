@@ -15,6 +15,34 @@ config.json
 # (names, card digits, tax IDs, addresses). Kept on disk, out of git history.
 data/
 
+# Personal data must stay out of git wherever it ends up; data/ above is only the
+# usual place. Databases (and their backups and journal files), mailbox exports,
+# receipt photos, and the folders the app writes scans into.
+*.db
+*.db-shm
+*.db-wal
+*.db.bak-*
+*.sqlite
+*.sqlite3
+*.mbox
+*.eml
+*.jpg
+*.jpeg
+*.heic
+*.heif
+*.tif
+*.tiff
+*.webp
+scans/
+originals/
+email_attachments/
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
 # macOS
 .DS_Store
 
