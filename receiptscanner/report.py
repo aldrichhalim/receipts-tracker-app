@@ -1,4 +1,5 @@
-"""CSV export of saved entries over a date range.
+"""CSV export of saved entries over a date range, and the summary figures that
+the CSV dialog and the attachment PDF both show.
 
 Kept apart from the UI so the export can be exercised without a window, and
 so the column layout lives in one place.
@@ -49,6 +50,19 @@ def summarize(
         totals[currency] = totals.get(currency, 0.0) + amount
     return ReportSummary(
         count=len(rows), total=total, start=start, end=end, totals=totals
+    )
+
+
+def format_money(amount: float, currency: str = "") -> str:
+    """`IDR 44,000` or `USD 56.48`: whole amounts drop the decimals."""
+    text = f"{amount:,.0f}" if float(amount).is_integer() else f"{amount:,.2f}"
+    return f"{currency} {text}".strip()
+
+
+def format_totals(totals: dict[str, float]) -> str:
+    """ "IDR 69,000 · USD 76.48": one figure per currency, never a mixed sum."""
+    return " · ".join(
+        format_money(amount, currency) for currency, amount in sorted(totals.items())
     )
 
 

@@ -40,6 +40,7 @@ never fetched.
 | **Human review, always** | Every OCR suggestion is editable and nothing is auto-committed. |
 | **No double entries** | The same purchase saved twice updates one row instead of being counted twice. |
 | **CSV reports** | Export any date range, with per-currency totals shown before you commit to a file. |
+| **Receipt attachments** | A PDF for the same range: an index, then every receipt's image under a caption. For finance teams that want the receipt next to the figure. |
 | **Self-contained app** | A macOS `.app` with OpenCV, Tesseract and the language models embedded. No Homebrew needed to run it. |
 
 ## Quick start
@@ -108,6 +109,30 @@ Date,Category,Expense Detail,Amount,Currency
 - Totals are kept **per currency** (`IDR 69,000 · USD 76.48`), because adding
   rupiah to dollars means nothing. No total row is appended, which would get in
   the way of sorting and filtering.
+
+### Receipt attachments
+
+**Report → Generate Receipt Attachments (PDF)…** (⇧⌘E) writes one PDF for a date
+range, for finance teams that want the receipts alongside the figures. It uses the
+same range picker as the CSV, and leaves the CSV export exactly as it was.
+
+- **An index, then a page per receipt.** The index lists every entry with its page
+  number and the per-currency totals. Each receipt page carries a caption (its
+  position, date, category, merchant, amount and entry ID) above the image.
+  Entries come in the same order as the CSV rows, so entry 12 in the PDF is row 12
+  in the spreadsheet.
+- **Every entry has a picture.** Photos and e-receipts use their stored scan.
+  Entries saved before e-receipts were rendered have none, so those are drawn again
+  from their original mailbox, matched by Message-ID, exactly as a fresh import
+  would draw them. If that mailbox has moved, the page says "No image on file" and
+  shows the stored text, so no entry silently drops out. The dialog previews how
+  many of each before you export.
+- **A receipt too tall to read on one page** continues over the next.
+- **Read-only.** Nothing is saved to your scan folder or database, and a mailbox
+  is only read. The export runs in the background with a progress bar and can be
+  cancelled; the file is written only once it is complete.
+- **Small and private.** Pages are 1-bit A4 at 200 dpi, so about 170 receipts come
+  to a few megabytes, and the PDF carries no author or other personal metadata.
 
 ## Mailbox import
 
@@ -354,7 +379,8 @@ env -u TESSDATA_PREFIX PATH=/usr/bin:/bin \
 | `receiptscanner/parsing.py` | OCR text → date, category, name, amount, currency |
 | `receiptscanner/pipeline.py` | Ties the stages together |
 | `receiptscanner/db.py` | SQLite storage, the de-duplication key, schema migrations |
-| `receiptscanner/report.py` | CSV export and date-range presets |
+| `receiptscanner/report.py` | CSV export, date-range presets, shared money formatting |
+| `receiptscanner/attachments.py` | PDF of the receipt images behind a report |
 | `receiptscanner/app.py` | tkinter UI |
 | `tests/` | pytest suite |
 | `assets/` | Brand logo and the app-icon master |

@@ -66,6 +66,11 @@ synthetic mailboxes (`tests/helpers.py`). Rules that are easy to break:
 - **The `gui` probe runs in a subprocess.** A second `tkinter.Tk()` in the
   pytest process segfaults on macOS, so the process must not create a throwaway
   root just to check for a display.
+- **A destroyed window's Tk variables must not be finalised on a worker
+  thread.** An autouse fixture in `conftest.py` runs `gc.collect()` on the main
+  thread around every `gui` test. Without it a worker's collector pass calls
+  `Variable.__del__`, which waits for a mainloop a pumped test never runs: the
+  export looks hung, or raises "main thread is not in main loop".
 - **Characterise before you change, then red → green.** The suite pins the
   tuned IDR behaviour so refactors cannot trade it away. When adding behaviour,
   write the failing test first; if an existing test has to change, treat it as a
@@ -96,6 +101,7 @@ app.py (tkinter)  ──calls──>  pipeline.py  ──>  imaging.py   (load, 
                   ──imports─>  mail.py      (.mbox -> images + rows + body text)
      └── on save ─────────────────────────>     db.py        (sqlite)
      └── Report menu ─────────────────────>     report.py    (csv over a date range)
+                                           └──>  attachments.py (pdf of the receipt images)
 
 config.py  — every path and tuning knob      resources.py — locate tesseract/tessdata
 ```
@@ -135,7 +141,43 @@ receipt. What actually prevents a double entry is the dedupe key below.
 `report.py` holds the CSV layout and date presets with no Tk import, so the
 export can be tested headlessly; `ReportDialog` in `app.py` is only the window
 around it. The CSV deliberately carries no total row — it would break sorting
-and filtering — so the total is surfaced in the app instead.
+and filtering — so the total is surfaced in the app instead. `format_money` and
+`format_totals` live here too, because the CSV dialog and the attachment PDF show
+the same figures; `app.py` aliases them as `_format_money` / `_format_totals`.
+
+### Receipt attachments (`attachments.py`)
+
+**Report → Generate Receipt Attachments (PDF)…** writes one PDF for a date range:
+an index (with per-currency totals), then a captioned page per entry. It is a
+second export beside the CSV and never touches it (`write_csv` and `COLUMNS` are
+unchanged). No Tk import, like `report.py`. Non-obvious rules:
+
+- **Where an entry's picture comes from, in order:** its stored scan; else, for
+  a legacy `email` row that never got an image, the original mailbox
+  (`source_path` ending `.mbox`), found by `email_message_id` and drawn with the
+  same `render.render_email` a fresh import uses; else the original photo; else a
+  marked placeholder page with the stored text. An `email_image` row's
+  `source_path` is a picture, not a mailbox, so the suffix decides.
+- **Strictly read-only.** Redrawing parses the mailbox into a temporary
+  directory (`MailboxCache`, once per mailbox per export), runs no OCR, saves no
+  PNG and writes no row. `expected_origin()` is the cheap estimate the dialog
+  previews; it can disagree with `resolve_image()` for a scan that will not
+  decode or a Message-ID the mailbox lacks.
+- **Rows keep the order they are given** (`entries_between`: date, then id), so
+  entry *n* in the PDF is CSV row *n*. Do not sort inside the module.
+- **Pages are 1-bit A4 at 200 dpi** so Pillow writes CCITT G4: crisp text and a
+  few MB for ~170 receipts, where JPEG pages blur text. Scans and renders are
+  thresholded (`THRESHOLD`); a camera photo (`original`) is dithered instead. A
+  receipt too tall to stay above `MIN_FIT_FRACTION` of its full-width size is
+  sliced across continuation pages rather than shrunk.
+- **All pages are built before anything is written**, then renamed into place
+  from `<name>.part`: a cancel (`Cancelled`, checked before every entry) or a
+  failure leaves no partial file and does not touch an earlier PDF. No author is
+  written, so the PDF carries no personal metadata.
+- **UI:** `AttachmentsDialog` subclasses `ReportDialog`, which exposes its
+  wording, file type and write step as class-level hooks. The export runs on a
+  worker thread that touches no widgets and reports through a queue; the window
+  close button routes to cancel so a worker is never orphaned.
 
 ### Currency (`parsing.py`)
 

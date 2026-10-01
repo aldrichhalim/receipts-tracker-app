@@ -8,6 +8,7 @@ script once wrote a row and several scans into the real database.
 from __future__ import annotations
 
 import copy
+import gc
 import json
 import shutil
 from pathlib import Path
@@ -30,6 +31,24 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("RECEIPTSCANNER_CONFIG", str(tmp_path / "config.json"))
     return home
+
+
+@pytest.fixture(autouse=True)
+def collect_tk_garbage(request):
+    """Run the collector on the main thread around every `gui` test.
+
+    A destroyed window's Tk variables are finalised by whichever thread the
+    collector happens to run on. On a worker thread that call waits for the main
+    thread to be in mainloop, which a test that pumps `update()` never is: it
+    stalls for a second per variable, or raises "main thread is not in main loop".
+    Collecting here keeps that garbage off the worker.
+    """
+    if "gui" not in request.keywords:
+        yield
+        return
+    gc.collect()
+    yield
+    gc.collect()
 
 
 @pytest.fixture

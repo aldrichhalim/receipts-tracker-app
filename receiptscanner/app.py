@@ -26,7 +26,7 @@ from .mail import EmailReceipt, MailboxError, iter_mbox
 from .ocr import OcrUnavailableError, describe_engine, get_engine
 from .parsing import ParsedReceipt, parse_number
 from .pipeline import PipelineOutput, process_email, process_image
-from . import report
+from . import attachments, report
 
 QUEUED = "Queued"
 PROCESSING = "Processing"
@@ -80,16 +80,9 @@ def parse_date_input(raw: str, currency: str = "") -> str | None:
     return None
 
 
-def _format_money(amount: float, currency: str = "") -> str:
-    text = f"{amount:,.0f}" if float(amount).is_integer() else f"{amount:,.2f}"
-    return f"{currency} {text}".strip()
-
-
-def _format_totals(totals: dict[str, float]) -> str:
-    """ "IDR 69,000 · USD 76.48": one figure per currency, never a mixed sum."""
-    return " · ".join(
-        _format_money(amount, currency) for currency, amount in sorted(totals.items())
-    )
+# Both exports show the same figures, so the formatting lives beside report.py.
+_format_money = report.format_money
+_format_totals = report.format_totals
 
 
 def _shrink(image: Image.Image, max_side: int = PREVIEW_MAX_SIDE) -> Image.Image:
@@ -171,7 +164,20 @@ class QueueItem:
 
 
 class ReportDialog(tk.Toplevel):
-    """Pick a date range, see what it covers, write it out as CSV."""
+    """Pick a date range, see what it covers, write it out as CSV.
+
+    The wording and the write step are class-level hooks so the receipt-attachment
+    dialog can reuse the whole range picker; this class itself only ever writes CSV.
+    """
+
+    TITLE = "Generate Report"
+    HEADING = "Export saved entries as CSV"
+    SUBTITLE = "Columns: date, category, expense detail, amount."
+    BUTTON = "Export CSV…"
+    SAVE_TITLE = "Save report"
+    EXTENSION = ".csv"
+    FILETYPES = [("CSV", "*.csv"), ("All files", "*.*")]
+    DONE_TITLE = "Report saved"
 
     def __init__(
         self, parent: "ReceiptScannerApp", store: ReceiptStore, config: Config
@@ -182,22 +188,21 @@ class ReportDialog(tk.Toplevel):
         self.rows: list[Any] = []
         self._preview_job: str | None = None
         self._parent = parent  # held explicitly: used after this window is destroyed
+        self._busy = False
 
-        self.title("Generate Report")
+        self.title(self.TITLE)
         self.resizable(False, False)
         self.transient(parent)
 
         body = ttk.Frame(self, padding=(16, 14))
         body.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(
-            body, text="Export saved entries as CSV", font=("Helvetica", 13, "bold")
-        ).grid(row=0, column=0, columnspan=4, sticky=tk.W)
-        ttk.Label(
-            body,
-            text="Columns: date, category, expense detail, amount.",
-            foreground="#6b7280",
-        ).grid(row=1, column=0, columnspan=4, sticky=tk.W, pady=(2, 12))
+        ttk.Label(body, text=self.HEADING, font=("Helvetica", 13, "bold")).grid(
+            row=0, column=0, columnspan=4, sticky=tk.W
+        )
+        ttk.Label(body, text=self.SUBTITLE, foreground="#6b7280").grid(
+            row=1, column=0, columnspan=4, sticky=tk.W, pady=(2, 12)
+        )
 
         default_start, default_end = report.presets()["This month"]
         self.var_start = tk.StringVar(value=default_start)
@@ -234,16 +239,16 @@ class ReportDialog(tk.Toplevel):
 
         buttons = ttk.Frame(body)
         buttons.grid(row=6, column=0, columnspan=4, sticky=tk.EW, pady=(16, 0))
-        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
-        self.export_button = ttk.Button(
-            buttons, text="Export CSV…", command=self._export
-        )
+        self.cancel_button = ttk.Button(buttons, text="Cancel", command=self._cancel)
+        self.cancel_button.pack(side=tk.RIGHT)
+        self.export_button = ttk.Button(buttons, text=self.BUTTON, command=self._export)
         self.export_button.pack(side=tk.RIGHT, padx=(0, 8))
 
         for widget in (self.entry_start, self.entry_end):
             widget.bind("<KeyRelease>", self._schedule_preview)
         self.bind("<Return>", lambda _event: self._export())
-        self.bind("<Escape>", lambda _event: self.destroy())
+        self.bind("<Escape>", lambda _event: self._cancel())
+        self.protocol("WM_DELETE_WINDOW", self._cancel)
 
         self._refresh_preview()
         self.entry_start.focus_set()
@@ -281,7 +286,19 @@ class ReportDialog(tk.Toplevel):
             return None
         return (start, end) if start <= end else (end, start)
 
+    def _cancel(self) -> None:
+        self.destroy()
+
+    def _default_filename(self, start: str, end: str) -> str:
+        return report.default_filename(start, end)
+
+    def _preview_detail(self, rows: list[Any]) -> str:
+        """An extra line under the entry count; the CSV has nothing to add."""
+        return ""
+
     def _refresh_preview(self) -> None:
+        if self._busy:
+            return
         self._preview_job = None
         span = self._current_range()
         if span is None:
@@ -303,16 +320,17 @@ class ReportDialog(tk.Toplevel):
             return
 
         total = _format_totals(summary.totals)
-        self.preview_label.config(
-            text=f"{summary.count} entr{'y' if summary.count == 1 else 'ies'} · {total}",
-            foreground="#15803d",
-        )
+        text = f"{summary.count} entr{'y' if summary.count == 1 else 'ies'} · {total}"
+        detail = self._preview_detail(self.rows)
+        if detail:
+            text += f"\n{detail}"
+        self.preview_label.config(text=text, foreground="#15803d")
         self.export_button.state(["!disabled"])
 
     # -- writing ---------------------------------------------------------
     def _export(self) -> None:
         span = self._current_range()
-        if span is None or not self.rows:
+        if self._busy or span is None or not self.rows:
             return
         start, end = span
 
@@ -320,32 +338,176 @@ class ReportDialog(tk.Toplevel):
         self.grab_release()
         target = filedialog.asksaveasfilename(
             parent=self,
-            title="Save report",
-            defaultextension=".csv",
-            filetypes=[("CSV", "*.csv"), ("All files", "*.*")],
-            initialfile=report.default_filename(start, end),
+            title=self.SAVE_TITLE,
+            defaultextension=self.EXTENSION,
+            filetypes=self.FILETYPES,
+            initialfile=self._default_filename(start, end),
             initialdir=str(self.config_data.database_path.parent),
         )
         if not target:
             self.grab_set()
             return
+        self._write(Path(target), start, end)
 
+    def _write(self, target: Path, start: str, end: str) -> None:
+        """Write the CSV. Overridden by the attachment dialog."""
         try:
-            written = report.write_csv(
-                self.rows, Path(target), self.config_data.currency
-            )
+            written = report.write_csv(self.rows, target, self.config_data.currency)
         except OSError as exc:
             messagebox.showerror(
                 "Could not write report", f"{target}\n\n{exc}", parent=self
             )
             self.grab_set()
             return
+        self._finish(target, written, start, end)
 
+    def _finish(
+        self, target: Path, count: int, start: str, end: str, detail: str = ""
+    ) -> None:
         summary = report.summarize(self.rows, start, end, self.config_data.currency)
         total = _format_totals(summary.totals)
         parent = self._parent
         self.destroy()
-        parent.report_written(Path(target), written, total, start, end)
+        parent.report_written(target, count, total, start, end, detail, self.DONE_TITLE)
+
+
+class AttachmentsDialog(ReportDialog):
+    """The same range picker, writing a PDF of each entry's receipt image.
+
+    Building the PDF can take several seconds (redrawing e-receipts, composing
+    pages), so it runs on a worker thread that touches no widgets and reports
+    through a queue, the same rule as the main window's processing queue.
+    """
+
+    TITLE = "Receipt Attachments"
+    HEADING = "Attach receipts as a PDF"
+    SUBTITLE = "An index, then each receipt's scan, in the same order as the CSV."
+    BUTTON = "Export PDF…"
+    SAVE_TITLE = "Save receipt attachments"
+    EXTENSION = ".pdf"
+    FILETYPES = [("PDF", "*.pdf"), ("All files", "*.*")]
+    DONE_TITLE = "Attachments saved"
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._worker: threading.Thread | None = None
+        self._events: queue.Queue[tuple] = queue.Queue()
+        self._cancel_event = threading.Event()
+        super().__init__(*args, **kwargs)
+
+    def _default_filename(self, start: str, end: str) -> str:
+        return attachments.default_filename(start, end)
+
+    def _preview_detail(self, rows: list[Any]) -> str:
+        counts = {"scan": 0, "redrawn": 0, "original": 0, "none": 0}
+        for row in rows:
+            counts[attachments.expected_origin(row)] += 1
+        parts = [f"{counts['scan']} with a scan"]
+        if counts["redrawn"]:
+            parts.append(f"{counts['redrawn']} redrawn from mailbox")
+        if counts["original"]:
+            parts.append(f"{counts['original']} from the original photo")
+        if counts["none"]:
+            parts.append(f"{counts['none']} without an image")
+        return " · ".join(parts)
+
+    # -- running the export off the UI thread -------------------------------
+    def _write(self, target: Path, start: str, end: str) -> None:
+        self._busy = True
+        self._cancel_event.clear()
+        self.export_button.state(["disabled"])
+        for widget in (self.entry_start, self.entry_end):
+            widget.state(["disabled"])
+
+        rows = list(self.rows)
+        self.progress = ttk.Progressbar(
+            self.preview_label.master, maximum=len(rows), length=320
+        )
+        self.progress.grid(row=7, column=0, columnspan=4, sticky=tk.EW, pady=(10, 0))
+        self.preview_label.config(text="Preparing receipts…", foreground="#374151")
+        self.grab_set()
+
+        def work() -> None:
+            try:
+                result = attachments.write_pdf(
+                    rows,
+                    target,
+                    self.config_data,
+                    start=start,
+                    end=end,
+                    progress=lambda done, total: self._events.put(("progress", done)),
+                    cancel=self._cancel_event,
+                )
+                self._events.put(("done", result, start, end))
+            except attachments.Cancelled:
+                self._events.put(("cancelled",))
+            except Exception as exc:  # reported in the dialog, never lost in a thread
+                self._events.put(("error", exc))
+
+        self._worker = threading.Thread(target=work, daemon=True)
+        self._worker.start()
+        self.after(80, self._poll)
+
+    def _poll(self) -> None:
+        try:
+            while True:
+                event = self._events.get_nowait()
+                kind = event[0]
+                if kind == "progress":
+                    self.progress["value"] = event[1]
+                    self.preview_label.config(
+                        text=f"Preparing receipts… {event[1]} of "
+                        f"{int(self.progress['maximum'])}"
+                    )
+                elif kind == "done":
+                    _kind, result, start, end = event
+                    self._worker = None
+                    self._finish(
+                        result.path,
+                        result.entries,
+                        start,
+                        end,
+                        self._result_detail(result),
+                    )
+                    return
+                elif kind == "cancelled":
+                    self._worker = None
+                    self.destroy()
+                    return
+                elif kind == "error":
+                    self._worker = None
+                    self._stop_busy()
+                    messagebox.showerror(
+                        "Could not write attachments", str(event[1]), parent=self
+                    )
+                    return
+        except queue.Empty:
+            pass
+        self.after(80, self._poll)
+
+    def _stop_busy(self) -> None:
+        self._busy = False
+        self.progress.destroy()
+        for widget in (self.entry_start, self.entry_end):
+            widget.state(["!disabled"])
+        self._refresh_preview()
+
+    @staticmethod
+    def _result_detail(result: "attachments.AttachmentResult") -> str:
+        parts = [f"{result.pages} pages"]
+        if result.by_origin.get("redrawn"):
+            parts.append(f"{result.by_origin['redrawn']} redrawn from mailbox")
+        if result.by_origin.get("none"):
+            parts.append(f"{result.by_origin['none']} without an image")
+        return " · ".join(parts)
+
+    def _cancel(self) -> None:
+        if self._worker is not None:
+            # The worker stops at its next entry; _poll closes the window when it does.
+            self._cancel_event.set()
+            self.preview_label.config(text="Cancelling…", foreground="#b45309")
+            self.cancel_button.state(["disabled"])
+            return
+        self.destroy()
 
 
 class ReceiptScannerApp(tk.Tk):
@@ -415,6 +577,11 @@ class ReceiptScannerApp(tk.Tk):
         report_menu.add_command(
             label="Generate Report…", accelerator="Cmd+E", command=self.generate_report
         )
+        report_menu.add_command(
+            label="Generate Receipt Attachments (PDF)…",
+            accelerator="Shift+Cmd+E",
+            command=self.generate_attachments,
+        )
         menubar.add_cascade(label="Report", menu=report_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -428,6 +595,7 @@ class ReceiptScannerApp(tk.Tk):
         self.bind_all("<Command-r>", lambda _event: self.start_processing())
         self.bind_all("<Command-s>", lambda _event: self.save_current())
         self.bind_all("<Command-e>", lambda _event: self.generate_report())
+        self.bind_all("<Command-E>", lambda _event: self.generate_attachments())
 
     def _build_toolbar(self) -> None:
         bar = ttk.Frame(self, padding=(10, 8))
@@ -1482,6 +1650,13 @@ class ReceiptScannerApp(tk.Tk):
 
     def generate_report(self) -> None:
         """Export saved entries over a date range as CSV."""
+        self._open_report_dialog(ReportDialog)
+
+    def generate_attachments(self) -> None:
+        """Export a PDF of the receipt images behind a date range."""
+        self._open_report_dialog(AttachmentsDialog)
+
+    def _open_report_dialog(self, dialog_class: type[ReportDialog]) -> None:
         rows, _total = self.store.summary()
         if not rows:
             messagebox.showinfo(
@@ -1490,18 +1665,26 @@ class ReceiptScannerApp(tk.Tk):
                 "Process some receipts and save them first.",
             )
             return
-        dialog = ReportDialog(self, self.store, self.config_data)
+        dialog = dialog_class(self, self.store, self.config_data)
         self.wait_window(dialog)
 
     def report_written(
-        self, path: Path, count: int, total: str, start: str, end: str
+        self,
+        path: Path,
+        count: int,
+        total: str,
+        start: str,
+        end: str,
+        detail: str = "",
+        title: str = "Report saved",
     ) -> None:
-        """Called by ReportDialog once the file is on disk."""
-        self._set_status(f"Report saved: {path.name} — {count} entries, {total}.")
+        """Called by a report dialog once the file is on disk."""
+        self._set_status(f"{title}: {path.name} — {count} entries, {total}.")
+        extra = f"{detail}\n" if detail else ""
         if messagebox.askyesno(
-            "Report saved",
+            title,
             f"{count} entr{'y' if count == 1 else 'ies'} from {start} to {end}\n"
-            f"Total: {total}\n\n{path}\n\nShow it in Finder?",
+            f"Total: {total}\n{extra}\n{path}\n\nShow it in Finder?",
         ):
             self._reveal(path)
 
